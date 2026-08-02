@@ -9,8 +9,8 @@ Type=oneshot
 User=backmaster
 Group=backmaster
 Environment=BACKMASTER_CONFIG_ROOT=/etc/backmaster
-Environment=BACKMASTER_INSTALL_ROOT=/opt/backmaster
-ExecStart=/usr/local/bin/backmaster run %i
+Environment=BACKMASTER_INSTALL_ROOT=/usr/lib/backmaster
+ExecStart=/usr/bin/backmaster run %i
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
@@ -21,6 +21,6 @@ ProtectHome=true
 ProtectSystem=strict
 StateDirectory=backmaster/%i
 StateDirectoryMode=0750
-ReadOnlyPaths=/etc/backmaster /opt/backmaster
+ReadOnlyPaths=/etc/backmaster /usr/lib/backmaster
 ReadWritePaths=/var/lib/backmaster/%i /run
 RestrictSUIDSGID=true

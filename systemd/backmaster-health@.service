@@ -7,11 +7,10 @@ Type=oneshot
 User=backmaster
 Group=backmaster
 Environment=BACKMASTER_CONFIG_ROOT=/etc/backmaster
-Environment=BACKMASTER_INSTALL_ROOT=/opt/backmaster
-ExecStart=/usr/local/bin/backmaster health %i
+Environment=BACKMASTER_INSTALL_ROOT=/usr/lib/backmaster
+ExecStart=/usr/bin/backmaster health %i
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadOnlyPaths=/etc/backmaster /opt/backmaster
-
+ReadOnlyPaths=/etc/backmaster /usr/lib/backmaster
