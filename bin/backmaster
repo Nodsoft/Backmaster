@@ -6,17 +6,11 @@ readonly INSTALL_ROOT="${BACKMASTER_INSTALL_ROOT:-/opt/backmaster}"
 readonly SELF="$(readlink -f "$0")"
 
 log() {
-    printf '%s instance=%s node=%s %s\n' \
-        "$(date --iso-8601=seconds)" \
-        "${INSTANCE_NAME:-unknown}" \
-        "${NODE_NAME:-unknown}" \
-        "$*"
+    printf '%s instance=%s node=%s %s\n' "$(date --iso-8601=seconds)" \
+        "${INSTANCE_NAME:-unknown}" "${NODE_NAME:-unknown}" "$*"
 }
 
-die() {
-    log "level=error message=$*" >&2
-    exit 1
-}
+die() { log "level=error message=$*" >&2; exit 1; }
 
 usage() {
     cat <<'USAGE'
@@ -25,22 +19,17 @@ Usage:
   backmaster health INSTANCE
   backmaster connectivity INSTANCE
   backmaster driver INSTANCE VERB [ARG...]
+  backmaster exporter INSTANCE VERB [ARG...]
 USAGE
 }
 
-validate_name() {
-    [[ "$1" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "invalid_name value=$1"
-}
+validate_name() { [[ "$1" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "invalid_name value=$1"; }
 
 load_instance() {
-    local requested="$1"
-    local config="${CONFIG_ROOT}/instances.d/${requested}.env"
-
+    local requested="$1" config="${CONFIG_ROOT}/instances.d/${1}.env"
     validate_name "$requested"
     [[ -r "$config" ]] || die "missing_instance_config path=$config"
-
     set -a
-    # Instance files are root-managed configuration, not user input.
     # shellcheck disable=SC1090
     source "$config"
     set +a
@@ -48,180 +37,148 @@ load_instance() {
     : "${INSTANCE_NAME:?INSTANCE_NAME is required}"
     : "${NODE_NAME:?NODE_NAME is required}"
     : "${DRIVER:?DRIVER is required}"
+    : "${EXPORTER:?EXPORTER is required}"
     [[ "$INSTANCE_NAME" == "$requested" ]] || die "instance_name_mismatch"
-    validate_name "$DRIVER"
-
+    validate_name "$DRIVER"; validate_name "$EXPORTER"
     DRIVER_EXEC="${INSTALL_ROOT}/drivers/${DRIVER}/driver"
+    EXPORTER_EXEC="${INSTALL_ROOT}/exporters/${EXPORTER}/exporter"
     [[ -x "$DRIVER_EXEC" ]] || die "missing_driver path=$DRIVER_EXEC"
+    [[ -x "$EXPORTER_EXEC" ]] || die "missing_exporter path=$EXPORTER_EXEC"
 
     MAX_AGE_SECONDS="${MAX_AGE_SECONDS:-82800}"
     CONSUL_LOCK_KEY="${CONSUL_LOCK_KEY:-service/backmaster/${INSTANCE_NAME}}"
     CONSUL_LOCK_TIMEOUT="${CONSUL_LOCK_TIMEOUT:-30s}"
+    STAGING_ROOT="${STAGING_ROOT:-/var/lib/backmaster}"
     BACKUP_NAME_MODE="${BACKUP_NAME_MODE:-daily-time}"
     BACKUP_NAME_SUFFIX_MODE="${BACKUP_NAME_SUFFIX_MODE:-hostname}"
-
-    case "$BACKUP_NAME_MODE" in
-        daily|daily-serial|daily-time) ;;
-        *) die "invalid_backup_name_mode value=$BACKUP_NAME_MODE" ;;
-    esac
+    case "$BACKUP_NAME_MODE" in daily|daily-serial|daily-time) ;; *) die "invalid_backup_name_mode value=$BACKUP_NAME_MODE";; esac
     case "$BACKUP_NAME_SUFFIX_MODE" in
         none|hostname) ;;
-        custom)
-            : "${BACKUP_NAME_SUFFIX_VALUE:?BACKUP_NAME_SUFFIX_VALUE is required for custom suffixes}"
-            ;;
+        custom) : "${BACKUP_NAME_SUFFIX_VALUE:?BACKUP_NAME_SUFFIX_VALUE is required}" ;;
         *) die "invalid_backup_name_suffix_mode value=$BACKUP_NAME_SUFFIX_MODE" ;;
     esac
-
-    export MAX_AGE_SECONDS CONSUL_LOCK_KEY CONSUL_LOCK_TIMEOUT DRIVER_EXEC
-    export BACKUP_NAME_MODE BACKUP_NAME_SUFFIX_MODE BACKUP_NAME_SUFFIX_VALUE
+    export MAX_AGE_SECONDS CONSUL_LOCK_KEY CONSUL_LOCK_TIMEOUT STAGING_ROOT
+    export DRIVER_EXEC EXPORTER_EXEC BACKUP_NAME_MODE BACKUP_NAME_SUFFIX_MODE
+    export BACKUP_NAME_SUFFIX_VALUE INSTANCE_NAME NODE_NAME DRIVER EXPORTER
 }
 
 require_core_commands() {
     local name
-    for name in consul date; do
+    for name in consul date jq find mktemp sha256sum; do
         command -v "$name" >/dev/null || die "missing_command command=$name"
     done
-    if [[ "$BACKUP_NAME_SUFFIX_MODE" == "hostname" ]]; then
-        command -v hostname >/dev/null || die "missing_command command=hostname"
-    fi
-}
-
-validate_backup_name_part() {
-    [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || \
-        die "invalid_backup_name_part value=$1"
+    [[ "$BACKUP_NAME_SUFFIX_MODE" != hostname ]] || command -v hostname >/dev/null || die "missing_command command=hostname"
 }
 
 resolve_backup_name() {
-    local now
-    local day
-    local base
-    local serial
-    local suffix=""
-
-    now="$(date --utc +%Y-%m-%dT%H%M%SZ)"
-    day="${now%%T*}"
-
+    local now day base serial suffix=""
+    now="$(date --utc +%Y-%m-%dT%H%M%SZ)"; day="${now%%T*}"
     case "$BACKUP_NAME_MODE" in
-        daily)
-            base="$day"
-            ;;
-        daily-time)
-            base="$now"
-            ;;
+        daily) base="$day" ;;
+        daily-time) base="$now" ;;
         daily-serial)
-            serial="$($DRIVER_EXEC next-serial "$day")" || \
-                die "driver_next_serial_failed"
-            [[ "$serial" =~ ^[1-9][0-9]*$ ]] || \
-                die "driver_returned_invalid_serial value=$serial"
+            serial="$($EXPORTER_EXEC next-serial "$day")" || die "exporter_next_serial_failed"
+            [[ "$serial" =~ ^[1-9][0-9]*$ ]] || die "exporter_returned_invalid_serial value=$serial"
             printf -v base '%s-%03d' "$day" "$serial"
             ;;
     esac
-
     case "$BACKUP_NAME_SUFFIX_MODE" in
         none) ;;
-        hostname)
-            suffix="$(hostname --short)"
-            ;;
-        custom)
-            suffix="$BACKUP_NAME_SUFFIX_VALUE"
-            ;;
+        hostname) suffix="$(hostname --short)" ;;
+        custom) suffix="$BACKUP_NAME_SUFFIX_VALUE" ;;
     esac
     if [[ -n "$suffix" ]]; then
-        validate_backup_name_part "$suffix"
+        [[ "$suffix" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "invalid_backup_name_part value=$suffix"
         base="${base}-${suffix}"
     fi
-
-    BACKUP_NAME="$base"
-    export BACKUP_NAME
+    BACKUP_NAME="$base"; export BACKUP_NAME
 }
 
 is_fresh() {
-    local latest
-    local status
-    local age
-
-    set +e
-    latest="$($DRIVER_EXEC latest-epoch)"
-    status=$?
-    set -e
-
-    if (( status == 3 )); then
-        log "level=info message=no_completed_backup"
-        return 1
-    fi
-    (( status == 0 )) || die "driver_latest_failed status=$status"
-    [[ "$latest" =~ ^[0-9]+$ ]] || die "driver_returned_invalid_epoch"
-
+    local latest status age
+    set +e; latest="$($EXPORTER_EXEC latest-epoch)"; status=$?; set -e
+    if (( status == 3 )); then log "level=info message=no_completed_backup"; return 1; fi
+    (( status == 0 )) || die "exporter_latest_failed status=$status"
+    [[ "$latest" =~ ^[0-9]+$ ]] || die "exporter_returned_invalid_epoch"
     age=$(( $(date +%s) - latest ))
     log "level=info latest_backup_epoch=$latest age_seconds=$age"
     (( age >= 0 && age < MAX_AGE_SECONDS ))
 }
 
+ready_stage() {
+    local parent="${STAGING_ROOT}/${INSTANCE_NAME}"
+    [[ -d "$parent" ]] || return 1
+    find "$parent" -mindepth 1 -maxdepth 1 -type d -name '*.ready' -print -quit
+}
+
+export_stage() {
+    local stage="$1"
+    BACKUP_NAME="$(jq -er '.backup_name' "$stage/manifest.json")" || die "invalid_stage_manifest path=$stage"
+    export BACKUP_NAME
+    log "level=info action=export_start exporter=$EXPORTER backup_name=$BACKUP_NAME"
+    "$EXPORTER_EXEC" publish "$stage"
+    log "level=info action=export_complete exporter=$EXPORTER backup_name=$BACKUP_NAME"
+    rm -rf -- "$stage"
+}
+
+prepare_stage() {
+    local parent partial ready created
+    parent="${STAGING_ROOT}/${INSTANCE_NAME}"; mkdir -p "$parent"
+    partial="$(mktemp -d "${parent}/.${BACKUP_NAME}.partial.XXXXXX")"
+    mkdir "$partial/payload"
+    if ! "$DRIVER_EXEC" prepare "$partial/payload" >&2; then rm -rf -- "$partial"; die "driver_prepare_failed"; fi
+    (cd "$partial" && find payload -type f -print0 | sort -z | xargs -0 -r sha256sum > checksums.sha256)
+    created="$(date +%s)"
+    jq -n --arg name "$BACKUP_NAME" --arg instance "$INSTANCE_NAME" \
+        --arg driver "$DRIVER" --arg node "$NODE_NAME" --argjson created "$created" \
+        '{schema:1,backup_name:$name,instance:$instance,driver:$driver,node:$node,created_epoch:$created}' \
+        >"$partial/manifest.json"
+    ready="${parent}/${BACKUP_NAME}.ready"
+    [[ ! -e "$ready" ]] || { rm -rf -- "$partial"; die "stage_already_exists path=$ready"; }
+    mv "$partial" "$ready"
+    printf '%s\n' "$ready"
+}
+
 run_locked() {
-    if [[ "${FORCE_BACKUP:-0}" != "1" ]] && is_fresh; then
-        log "level=info result=skipped reason=fresh_backup_exists"
-        return 0
+    local stage
+    stage="$(ready_stage || true)"
+    if [[ -n "$stage" ]]; then
+        log "level=warning action=export_resume stage=$stage"
+        export_stage "$stage"; "$EXPORTER_EXEC" retain; return
     fi
-
+    if [[ "${FORCE_BACKUP:-0}" != 1 ]] && is_fresh; then log "level=info result=skipped reason=fresh_backup_exists"; return; fi
     resolve_backup_name
-    log "level=info action=backup_start driver=$DRIVER backup_name=$BACKUP_NAME"
-    "$DRIVER_EXEC" backup
-    log "level=info action=backup_complete driver=$DRIVER"
-
-    "$DRIVER_EXEC" retain
-    log "level=info action=retention_complete driver=$DRIVER"
+    log "level=info action=prepare_start driver=$DRIVER backup_name=$BACKUP_NAME"
+    stage="$(prepare_stage)"
+    log "level=info action=prepare_complete driver=$DRIVER stage=$stage"
+    export_stage "$stage"
+    "$EXPORTER_EXEC" retain
+    log "level=info action=retention_complete exporter=$EXPORTER"
 }
 
 run_instance() {
-    local instance="$1"
-    local option="${2:-}"
-    load_instance "$instance"
-    require_core_commands
-
-    case "$option" in
-        --force) FORCE_BACKUP=1; export FORCE_BACKUP ;;
-        --locked) run_locked; return ;;
-        "") ;;
-        *) die "unknown_argument argument=$option" ;;
-    esac
-
+    local instance="$1" option="${2:-}"
+    load_instance "$instance"; require_core_commands
+    case "$option" in --force) FORCE_BACKUP=1; export FORCE_BACKUP;; --locked) run_locked; return;; "") ;; *) die "unknown_argument argument=$option";; esac
     log "level=info action=lock_acquire key=$CONSUL_LOCK_KEY"
-    exec consul lock \
-        -child-exit-code \
-        -shell=false \
-        -timeout="$CONSUL_LOCK_TIMEOUT" \
-        -name="backmaster-${INSTANCE_NAME}-${NODE_NAME}" \
-        "$CONSUL_LOCK_KEY" \
+    exec consul lock -child-exit-code -shell=false -timeout="$CONSUL_LOCK_TIMEOUT" \
+        -name="backmaster-${INSTANCE_NAME}-${NODE_NAME}" "$CONSUL_LOCK_KEY" \
         "$SELF" run "$INSTANCE_NAME" --locked
 }
 
 main() {
-    local command="${1:-}"
-    local instance="${2:-}"
-
+    local command="${1:-}" instance="${2:-}"
     case "$command" in
-        run)
-            [[ -n "$instance" ]] || { usage; exit 64; }
-            run_instance "$instance" "${3:-}"
-            ;;
-        health|connectivity)
-            [[ -n "$instance" ]] || { usage; exit 64; }
-            load_instance "$instance"
-            "$DRIVER_EXEC" "${command}check"
-            ;;
-        driver)
+        run) [[ -n "$instance" ]] || { usage; exit 64; }; run_instance "$instance" "${3:-}" ;;
+        health) load_instance "$instance"; "$DRIVER_EXEC" healthcheck; "$EXPORTER_EXEC" healthcheck ;;
+        connectivity) load_instance "$instance"; "$DRIVER_EXEC" connectivitycheck; "$EXPORTER_EXEC" connectivitycheck ;;
+        driver|exporter)
             [[ -n "$instance" && -n "${3:-}" ]] || { usage; exit 64; }
-            load_instance "$instance"
-            shift 2
-            exec "$DRIVER_EXEC" "$@"
+            load_instance "$instance"; shift 2
+            if [[ "$command" == driver ]]; then exec "$DRIVER_EXEC" "$@"; else exec "$EXPORTER_EXEC" "$@"; fi
             ;;
-        -h|--help)
-            usage
-            ;;
-        *)
-            usage >&2
-            exit 64
-            ;;
+        -h|--help) usage ;;
+        *) usage >&2; exit 64 ;;
     esac
 }
 

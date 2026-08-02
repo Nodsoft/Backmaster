@@ -1,17 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-die() {
-    echo "postgres driver: $*" >&2
-    exit 1
-}
+die() { echo "postgres driver: $*" >&2; exit 1; }
 
 load_config() {
     : "${DRIVER_CONFIG:?DRIVER_CONFIG is required}"
     [[ -r "$DRIVER_CONFIG" ]] || die "cannot read $DRIVER_CONFIG"
-
     set -a
-    # Driver files are root-managed configuration, not user input.
     # shellcheck disable=SC1090
     source "$DRIVER_CONFIG"
     if [[ -n "${DRIVER_SECRET_FILE:-}" ]]; then
@@ -20,138 +15,57 @@ load_config() {
         source "$DRIVER_SECRET_FILE"
     fi
     set +a
-
-    : "${AZURE_DESTINATION:?AZURE_DESTINATION is required}"
-    : "${BARMAN_SERVER_NAME:?BARMAN_SERVER_NAME is required}"
-    : "${PGHOST:?PGHOST is required}"
-    : "${PGPORT:?PGPORT is required}"
-    : "${PGUSER:?PGUSER is required}"
-
-    BACKUP_JOBS="${BACKUP_JOBS:-2}"
-    MIN_CHUNK_SIZE="${MIN_CHUNK_SIZE:-104857600}"
-    RETENTION_POLICY="${RETENTION_POLICY:-RECOVERY WINDOW OF 14 DAYS}"
-    MINIMUM_REDUNDANCY="${MINIMUM_REDUNDANCY:-2}"
+    : "${PGHOST:?PGHOST is required}"; : "${PGPORT:?PGPORT is required}"; : "${PGUSER:?PGUSER is required}"
+    PG_COMPRESSION="${PG_COMPRESSION:-client-gzip:level=6}"
+    PG_CHECKPOINT="${PG_CHECKPOINT:-fast}"
 }
 
-provider_args() {
-    printf '%s\n' --cloud-provider azure-blob-storage
-    if [[ -n "${AZURE_CREDENTIAL_MODE:-}" ]]; then
-        printf '%s\n' --azure-credential "$AZURE_CREDENTIAL_MODE"
-    fi
-}
-
-catalogue() {
-    local -a args
-    mapfile -t args < <(provider_args)
-    barman-cloud-backup-list \
-        "${args[@]}" --format json \
-        "$AZURE_DESTINATION" "$BARMAN_SERVER_NAME"
-}
-
-latest_epoch() {
-    local latest
-    latest="$(catalogue | jq -r '
-        [ .[] | select((.status // "") == "DONE") | .end_time ]
-        | map(select(. != null)) | max // empty
-    ')"
-    [[ -n "$latest" ]] || exit 3
-    date --date="$latest" +%s
-}
-
-next_serial() {
-    local day="$1"
-    local latest
-
-    [[ "$day" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || \
-        die "invalid serial date: $day"
-    latest="$(catalogue | jq -r --arg day "$day" '
-        [ .[]
-          | (.backup_name // .name // "")
-          | select(test("^" + $day + "-[0-9]+(?:-|$)"))
-          | capture("^" + $day + "-(?<serial>[0-9]+)(?:-|$)").serial
-          | tonumber
-        ] | max // 0
-    ')"
-    [[ "$latest" =~ ^[0-9]+$ ]] || die "catalogue returned an invalid serial"
-    printf '%d\n' "$((latest + 1))"
-}
-
-backup() {
-    local -a args
-    mapfile -t args < <(provider_args)
-    : "${BACKUP_NAME:?BACKUP_NAME is required}"
-    pg_isready -q -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" || \
-        die "local PostgreSQL is unavailable"
-
-    barman-cloud-backup \
-        "${args[@]}" \
-        --gzip \
-        --jobs "$BACKUP_JOBS" \
-        --min-chunk-size "$MIN_CHUNK_SIZE" \
-        --host "$PGHOST" \
-        --port "$PGPORT" \
-        --user "$PGUSER" \
-        --name "$BACKUP_NAME" \
-        "$AZURE_DESTINATION" "$BARMAN_SERVER_NAME"
-}
-
-retain() {
-    local -a args
-    mapfile -t args < <(provider_args)
-    barman-cloud-backup-delete \
-        "${args[@]}" \
-        --retention-policy "$RETENTION_POLICY" \
-        --minimum-redundancy "$MINIMUM_REDUNDANCY" \
-        "$AZURE_DESTINATION" "$BARMAN_SERVER_NAME"
+prepare() {
+    local destination="$1"
+    [[ -d "$destination" ]] || die "staging payload does not exist: $destination"
+    [[ -z "$(find "$destination" -mindepth 1 -print -quit)" ]] || die "staging payload is not empty"
+    pg_isready -q -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" || die "local PostgreSQL is unavailable"
+    pg_basebackup --host="$PGHOST" --port="$PGPORT" --username="$PGUSER" \
+        --pgdata="$destination" --format=tar --wal-method=stream \
+        --compress="$PG_COMPRESSION" --checkpoint="$PG_CHECKPOINT" \
+        --manifest-checksums=SHA256 --label="$BACKUP_NAME"
 }
 
 connectivitycheck() {
-    local -a args
-    mapfile -t args < <(provider_args)
-    barman-cloud-backup-list \
-        "${args[@]}" --test \
-        "$AZURE_DESTINATION" "$BARMAN_SERVER_NAME"
+    command -v pg_basebackup >/dev/null || die "pg_basebackup is unavailable"
+    pg_isready -q -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" || die "local PostgreSQL is unavailable"
 }
 
-healthcheck() {
-    local latest
-    local age
-    latest="$(latest_epoch)" || { echo "CRITICAL: no completed base backup"; exit 2; }
-    age=$(( $(date +%s) - latest ))
-    if (( age < 0 || age > ${HEALTHCHECK_MAX_AGE_SECONDS:-129600} )); then
-        echo "CRITICAL: latest PostgreSQL base backup is ${age}s old"
-        exit 2
-    fi
-    echo "OK: latest PostgreSQL base backup is ${age}s old"
-}
+healthcheck() { connectivitycheck; echo "OK: local PostgreSQL can produce a base backup"; }
 
 wal_archive() {
-    local wal_path="$1"
-    local -a args
-    mapfile -t args < <(provider_args)
-    exec barman-cloud-wal-archive \
-        "${args[@]}" --gzip \
-        "$AZURE_DESTINATION" "$BARMAN_SERVER_NAME" "$wal_path"
+    local wal_path="$1" temporary
+    : "${EXPORTER_EXEC:?EXPORTER_EXEC is required}"
+    mkdir -p "${STAGING_ROOT}/${INSTANCE_NAME}"
+    temporary="$(mktemp "${STAGING_ROOT}/${INSTANCE_NAME}/.wal.XXXXXX.gz")"
+    if ! gzip -c "$wal_path" >"$temporary" || \
+        ! "$EXPORTER_EXEC" put-file "$temporary" "wal/$(basename "$wal_path").gz"; then
+        rm -f -- "$temporary"; return 1
+    fi
+    rm -f -- "$temporary"
 }
 
 wal_restore() {
-    local wal_name="$1"
-    local destination="$2"
-    local -a args
-    mapfile -t args < <(provider_args)
-    exec barman-cloud-wal-restore \
-        "${args[@]}" \
-        "$AZURE_DESTINATION" "$BARMAN_SERVER_NAME" \
-        "$wal_name" "$destination"
+    local wal_name="$1" destination="$2" temporary
+    : "${EXPORTER_EXEC:?EXPORTER_EXEC is required}"
+    mkdir -p "${STAGING_ROOT}/${INSTANCE_NAME}"
+    temporary="$(mktemp "${STAGING_ROOT}/${INSTANCE_NAME}/.wal-restore.XXXXXX.gz")"
+    if ! "$EXPORTER_EXEC" get-file "wal/${wal_name}.gz" "$temporary" || \
+        ! gzip -dc "$temporary" >"$destination"; then
+        rm -f -- "$temporary"; return 1
+    fi
+    rm -f -- "$temporary"
 }
 
 main() {
     load_config
     case "${1:-}" in
-        latest-epoch) latest_epoch ;;
-        next-serial) [[ $# -eq 2 ]] || exit 64; next_serial "$2" ;;
-        backup) backup ;;
-        retain) retain ;;
+        prepare) [[ $# -eq 2 ]] || exit 64; prepare "$2" ;;
         connectivitycheck) connectivitycheck ;;
         healthcheck) healthcheck ;;
         wal-archive) [[ $# -eq 2 ]] || exit 64; wal_archive "$2" ;;
