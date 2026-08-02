@@ -15,4 +15,5 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y shellcheck
       - run: shellcheck bin/* drivers/*/driver
       - run: bash -n bin/* drivers/*/driver
-
+      - run: bash tests/naming.bash
+      - run: bash tests/postgres-naming.bash

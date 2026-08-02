@@ -57,7 +57,23 @@ load_instance() {
     MAX_AGE_SECONDS="${MAX_AGE_SECONDS:-82800}"
     CONSUL_LOCK_KEY="${CONSUL_LOCK_KEY:-service/backmaster/${INSTANCE_NAME}}"
     CONSUL_LOCK_TIMEOUT="${CONSUL_LOCK_TIMEOUT:-30s}"
+    BACKUP_NAME_MODE="${BACKUP_NAME_MODE:-daily-time}"
+    BACKUP_NAME_SUFFIX_MODE="${BACKUP_NAME_SUFFIX_MODE:-hostname}"
+
+    case "$BACKUP_NAME_MODE" in
+        daily|daily-serial|daily-time) ;;
+        *) die "invalid_backup_name_mode value=$BACKUP_NAME_MODE" ;;
+    esac
+    case "$BACKUP_NAME_SUFFIX_MODE" in
+        none|hostname) ;;
+        custom)
+            : "${BACKUP_NAME_SUFFIX_VALUE:?BACKUP_NAME_SUFFIX_VALUE is required for custom suffixes}"
+            ;;
+        *) die "invalid_backup_name_suffix_mode value=$BACKUP_NAME_SUFFIX_MODE" ;;
+    esac
+
     export MAX_AGE_SECONDS CONSUL_LOCK_KEY CONSUL_LOCK_TIMEOUT DRIVER_EXEC
+    export BACKUP_NAME_MODE BACKUP_NAME_SUFFIX_MODE BACKUP_NAME_SUFFIX_VALUE
 }
 
 require_core_commands() {
@@ -65,6 +81,58 @@ require_core_commands() {
     for name in consul date; do
         command -v "$name" >/dev/null || die "missing_command command=$name"
     done
+    if [[ "$BACKUP_NAME_SUFFIX_MODE" == "hostname" ]]; then
+        command -v hostname >/dev/null || die "missing_command command=hostname"
+    fi
+}
+
+validate_backup_name_part() {
+    [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || \
+        die "invalid_backup_name_part value=$1"
+}
+
+resolve_backup_name() {
+    local now
+    local day
+    local base
+    local serial
+    local suffix=""
+
+    now="$(date --utc +%Y-%m-%dT%H%M%SZ)"
+    day="${now%%T*}"
+
+    case "$BACKUP_NAME_MODE" in
+        daily)
+            base="$day"
+            ;;
+        daily-time)
+            base="$now"
+            ;;
+        daily-serial)
+            serial="$($DRIVER_EXEC next-serial "$day")" || \
+                die "driver_next_serial_failed"
+            [[ "$serial" =~ ^[1-9][0-9]*$ ]] || \
+                die "driver_returned_invalid_serial value=$serial"
+            printf -v base '%s-%03d' "$day" "$serial"
+            ;;
+    esac
+
+    case "$BACKUP_NAME_SUFFIX_MODE" in
+        none) ;;
+        hostname)
+            suffix="$(hostname --short)"
+            ;;
+        custom)
+            suffix="$BACKUP_NAME_SUFFIX_VALUE"
+            ;;
+    esac
+    if [[ -n "$suffix" ]]; then
+        validate_backup_name_part "$suffix"
+        base="${base}-${suffix}"
+    fi
+
+    BACKUP_NAME="$base"
+    export BACKUP_NAME
 }
 
 is_fresh() {
@@ -95,7 +163,8 @@ run_locked() {
         return 0
     fi
 
-    log "level=info action=backup_start driver=$DRIVER"
+    resolve_backup_name
+    log "level=info action=backup_start driver=$DRIVER backup_name=$BACKUP_NAME"
     "$DRIVER_EXEC" backup
     log "level=info action=backup_complete driver=$DRIVER"
 
@@ -157,4 +226,3 @@ main() {
 }
 
 main "$@"
-

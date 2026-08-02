@@ -33,6 +33,13 @@ freshness. Drivers with continuous logs or journals should validate those too.
 
 Authenticate and verify repository access without writing backup data.
 
+### `next-serial DATE`
+
+Required when an instance uses `BACKUP_NAME_MODE=daily-serial`. Inspect the
+durable shared catalogue and print the next positive integer for the supplied
+UTC date. The core holds the distributed instance lock during this call, then
+exports the complete `BACKUP_NAME` before invoking `backup`.
+
 ## Semantics owned by the core
 
 The core owns:
@@ -40,6 +47,7 @@ The core owns:
 - Consul mutual exclusion per instance;
 - runner priority through staggered timers;
 - shared-catalogue freshness and fallback;
+- UTC naming shape, hostname/custom suffix resolution, and name validation;
 - structured start/skip/complete logging;
 - systemd lifecycle and resource priority.
 
@@ -50,6 +58,9 @@ Drivers own:
 - archive format and cloud client;
 - recovery-material retention;
 - restore tooling and documentation.
+
+The `backup` command must use the core-provided `BACKUP_NAME`. A driver owns
+serial lookup because catalogue metadata and query tools are backend-specific.
 
 Drivers that require a service-owned identity should ship instance-specific
 systemd drop-ins. Do not bake a database or mail user into the shared unit:
