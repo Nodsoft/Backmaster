@@ -1,0 +1,11 @@
+postgresql:
+  parameters:
+    archive_mode: "on"
+    archive_timeout: 60s
+    archive_command: >-
+      /usr/local/bin/backmaster driver nsys-postgres wal-archive %p
+
+# During recovery or from a future Patroni bootstrap method:
+#    restore_command: >-
+#      /usr/local/bin/backmaster driver nsys-postgres wal-restore %f %p
+

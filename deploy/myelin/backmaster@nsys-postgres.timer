@@ -1,0 +1,12 @@
+[Unit]
+Description=Myelin fallback PostgreSQL backup attempt
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 UTC
+Persistent=true
+RandomizedDelaySec=5m
+Unit=backmaster@nsys-postgres.service
+
+[Install]
+WantedBy=timers.target
+

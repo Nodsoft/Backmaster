@@ -1,0 +1,17 @@
+[Unit]
+Description=Backmaster health check for %i
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=postgres
+Group=postgres
+Environment=BACKMASTER_CONFIG_ROOT=/etc/backmaster
+Environment=BACKMASTER_INSTALL_ROOT=/opt/backmaster
+ExecStart=/usr/local/bin/backmaster health %i
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/etc/backmaster /opt/backmaster
+
