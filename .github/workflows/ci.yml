@@ -3,6 +3,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
   workflow_call:
 
 permissions:
@@ -14,8 +15,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y shellcheck
-      - run: shellcheck bin/* drivers/*/driver exporters/*/exporter
-      - run: bash -n bin/* drivers/*/driver exporters/*/exporter
+      - run: shellcheck bin/* drivers/*/driver exporters/*/exporter packaging/*.sh tests/*.bash
+      - run: bash -n bin/* drivers/*/driver exporters/*/exporter packaging/*.sh tests/*.bash
       - run: bash tests/naming.bash
       - run: bash tests/staging.bash
       - run: bash tests/rclone-exporter.bash
