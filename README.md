@@ -71,19 +71,37 @@ deploy/{axon,myelin}/         staggered timer examples
 docs/                         contracts and recovery runbook
 ```
 
-The Debian package installs runtime files under `/usr/lib/backmaster`,
-configuration under `/etc/backmaster`, and the CLI at `/usr/bin/backmaster`.
-The PostgreSQL systemd drop-in runs the
-flow as `postgres`; exporter secrets should be `0640 root:postgres`.
+The Debian packages separate the core, drivers, and exporters. This keeps
+source-specific and destination-specific dependencies off systems that do not
+use them:
+
+| Package | Contents |
+| --- | --- |
+| `backmaster-core` | CLI, lifecycle, staging, systemd templates |
+| `backmaster-driver-postgres` | PostgreSQL driver, examples, restore runbook |
+| `backmaster-exporter-rclone` | rclone exporter and configuration examples |
+| `backmaster` | Convenience metapackage installing all of the above |
+
+Component packages require the exact same version of `backmaster-core`, so a
+repository upgrade cannot silently combine incompatible contracts. The
+PostgreSQL systemd drop-in runs the flow as `postgres`; exporter secrets should
+be `0640 root:postgres`.
 
 ```bash
 curl -fsSL https://packages.nodsoft.net/install.sh | sudo bash
 sudo apt install backmaster
 ```
 
+For a minimal or custom flow, install only the required components:
+
+```bash
+sudo apt install backmaster-core backmaster-driver-postgres backmaster-exporter-rclone
+```
+
 Release and branch builds also publish a downloadable `.deb` workflow
-artifact. Build one locally with `packaging/build-deb.sh`; set `VERSION` and
-`ARCH` to override the detected values.
+artifact. A local build produces all four packages with
+`packaging/build-deb.sh`; set `VERSION` and `ARCH` to override the detected
+values.
 
 ```bash
 sudo -u postgres backmaster connectivity nsys-postgres
