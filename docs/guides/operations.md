@@ -1,5 +1,8 @@
 # Operations guide
 
+For exporter-specific catalogue, command, and retention behavior, see the
+[rclone exporter reference](../exporters/rclone.md).
+
 ## Commands
 
 | Command | Use |

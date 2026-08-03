@@ -1,5 +1,10 @@
 # Configuration reference
 
+This guide covers shared instance configuration. Component-specific behavior is
+documented with the installed component: see the
+[PostgreSQL driver](../drivers/postgresql.md) and
+[rclone exporter](../exporters/rclone.md).
+
 An instance joins one driver to one exporter. Its name is the filename below
 `/etc/backmaster/instances.d` without `.env` and must contain lowercase letters,
 digits, and hyphens.
@@ -114,7 +119,8 @@ PG_DATABASE_INCLUDE=$'backmaster\nmatrix\nsynapse'
 PG_DATABASE_EXCLUDE=$'scratch\ntest'
 ```
 
-No storage credentials belong in the driver file.
+No storage credentials belong in the driver file. For more detail, see the
+[PostgreSQL driver reference](../drivers/postgresql.md).
 
 ## Rclone exporter file
 
@@ -172,7 +178,9 @@ sudo chmod 0640 \
 ```
 
 Never commit secret files. Verify that the chosen rclone authentication method
-can list, read, write, and delete within only the intended destination.
+can list, read, write, and delete within only the intended destination. The
+[rclone exporter reference](../exporters/rclone.md) documents other backends,
+commands, remote layout, and retention behavior.
 
 ## Remote layout
 

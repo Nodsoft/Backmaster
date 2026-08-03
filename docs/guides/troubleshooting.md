@@ -109,6 +109,9 @@ the `archive_command` path. The Debian package installs `/usr/bin/backmaster`.
 
 ## Rclone exporter
 
+See the [rclone exporter reference](../exporters/rclone.md) for its complete
+configuration, remote layout, commands, and retention model.
+
 ### Connectivity fails
 
 Run the check as the service user and verify the remote name embedded in
