@@ -30,6 +30,10 @@ done
 [[ "$(field backmaster-exporter-rclone Replaces)" == "backmaster (<< $version)" ]]
 
 contents backmaster-core | grep '/usr/bin/backmaster$' >/dev/null
+contents backmaster-core | grep '/usr/share/doc/backmaster-core/installation.md$' >/dev/null
+contents backmaster-core | grep '/usr/share/doc/backmaster-core/configuration.md$' >/dev/null
+contents backmaster-core | grep '/usr/share/doc/backmaster-core/operations.md$' >/dev/null
+contents backmaster-core | grep '/usr/share/doc/backmaster-core/troubleshooting.md$' >/dev/null
 if contents backmaster-core | grep '/usr/lib/backmaster/drivers/postgres/driver$' >/dev/null; then
     echo "backmaster-core unexpectedly contains the PostgreSQL driver" >&2
     exit 1
@@ -39,6 +43,8 @@ if contents backmaster-core | grep '/usr/lib/backmaster/exporters/rclone/exporte
     exit 1
 fi
 contents backmaster-driver-postgres | grep '/usr/lib/backmaster/drivers/postgres/driver$' >/dev/null
+contents backmaster-driver-postgres | grep '/usr/share/doc/backmaster-driver-postgres/postgresql.md$' >/dev/null
+contents backmaster-driver-postgres | grep '/usr/share/doc/backmaster-driver-postgres/postgres-restore.md$' >/dev/null
 if contents backmaster-driver-postgres | grep '/usr/bin/backmaster$' >/dev/null; then
     echo "backmaster-driver-postgres unexpectedly contains the core CLI" >&2
     exit 1
