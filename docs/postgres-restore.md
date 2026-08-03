@@ -1,12 +1,18 @@
 # PostgreSQL restore runbook
 
-This runbook restores a physical PostgreSQL base backup produced by Backmaster.
-Perform recovery on an isolated host or network. Never point an unverified
-restore at production clients, Patroni DCS, or the production member port.
+This runbook restores physical and logical PostgreSQL backups produced by
+Backmaster. Perform recovery on an isolated host or network. Never point an
+unverified restore at production clients, Patroni DCS, or the production member
+port.
 
 The base backup is a compressed tar-format `pg_basebackup`. Streamed WAL makes
 it self-contained to the end of the backup. Separately archived WAL supports
 point-in-time recovery beyond that point.
+
+A logical payload instead contains `globals.sql.gz`, `databases.json`, and one
+custom-format dump per selected database. It supports selective restore and
+major-version migration subject to PostgreSQL compatibility, but not PITR or a
+byte-for-byte Patroni member rebuild.
 
 ## Recovery decisions
 
@@ -69,6 +75,12 @@ select another known-good backup.
 `payload/backup_manifest` is PostgreSQL's own backup manifest. When supported by
 the installed version, verify it after extraction with `pg_verifybackup` as an
 additional check.
+
+## Physical restore
+
+The following physical procedure assumes the chosen payload contains
+`base.tar` or a compressed variant. If it contains `databases.json`, use the
+logical procedure below instead.
 
 ## 3. Prepare an empty data directory
 
@@ -192,3 +204,45 @@ A production-ready flow has demonstrated:
 
 Record the selected backup, target, commands, timings, validation results, and
 cleanup after every drill.
+
+## Logical restore
+
+Restore logical backups into an already initialized, isolated PostgreSQL
+cluster. Use client tools compatible with the dump format and review extension
+and major-version compatibility before proceeding.
+
+Inspect the database index:
+
+```bash
+jq . "$restore_root/payload/databases.json"
+```
+
+Restore cluster globals once, reviewing the SQL before execution because it can
+create or alter roles and tablespaces:
+
+```bash
+gzip -dc "$restore_root/payload/globals.sql.gz" >"$restore_root/globals.sql"
+less "$restore_root/globals.sql"
+psql --set=ON_ERROR_STOP=1 --file="$restore_root/globals.sql" postgres
+```
+
+For each desired entry in `databases.json`, create an empty target database with
+the intended owner, then restore its mapped custom-format dump. For example:
+
+```bash
+database=backmaster
+dump_file="$(jq -r --arg database "$database" \
+  '.databases[] | select(.database == $database) | .file' \
+  "$restore_root/payload/databases.json")"
+test -n "$dump_file" && test "$dump_file" != null
+createdb --template=template0 "$database"
+pg_restore --exit-on-error --dbname="$database" \
+  "$restore_root/payload/$dump_file"
+```
+
+Use `--clean --if-exists` only when an intentional replacement workflow calls
+for it; never point it at an unverified production target. Validate roles,
+ownership, extensions, schemas, representative row counts, and application
+behavior. A logical backup set is made sequentially: each database dump is
+individually consistent, but cross-database state may represent different
+moments.

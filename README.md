@@ -34,7 +34,7 @@ The `backmaster` metapackage installs:
 | Package | Purpose |
 | --- | --- |
 | `backmaster-core` | CLI, lifecycle, staging, and systemd units |
-| `backmaster-driver-postgres` | PostgreSQL base backup and WAL driver |
+| `backmaster-driver-postgres` | Physical/WAL and logical PostgreSQL backups |
 | `backmaster-exporter-rclone` | Azure Blob and other rclone destinations |
 | `backmaster` | Convenience metapackage for all three components |
 
@@ -128,5 +128,6 @@ staging safety, or retention.
 - A remote backup is complete only when its `manifest.json` exists.
 - Local staging is deleted only after successful publication.
 - Retention always preserves `MINIMUM_REDUNDANCY` newest completed backups.
-- PostgreSQL WAL archival is separate from the daily base-backup cycle.
+- PostgreSQL physical mode supports WAL/PITR; logical mode supports per-database
+  selection.
 - Backups are not proven until restore drills are automated and monitored.

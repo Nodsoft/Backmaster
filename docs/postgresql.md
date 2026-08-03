@@ -1,27 +1,37 @@
 # PostgreSQL and Patroni guide
 
-The PostgreSQL driver produces a physical, compressed `pg_basebackup`. Streamed
-WAL makes the base backup self-contained, while separately archived WAL enables
-point-in-time recovery (PITR).
+The PostgreSQL driver has two selectable modes:
 
-This flow backs up the whole PostgreSQL cluster, not individual databases. It is
-suited to rebuilding a failed member or recovering an entire Patroni cluster.
-Logical dumps may be added as a separate future driver when object-level restore
-is more important than cluster recovery.
+<!-- markdownlint-disable MD013 -->
+| Mode | Produces | Best for | Does not provide |
+| --- | --- | --- | --- |
+| `physical` | Compressed `pg_basebackup` plus optional continuous WAL | Cluster/member rebuild and PITR | Per-database selection |
+| `logical` | Globals plus one custom-format `pg_dump` per database | Selective backup, migration, object/database restore | PITR or a Patroni member image |
+<!-- markdownlint-enable MD013 -->
+
+`physical` remains the default. Use separate Backmaster instances and remote
+destination roots if you want both modes: for example `postgres-physical` and
+`postgres-logical`. This gives each flow independent freshness, naming,
+retention, monitoring, and restore history.
 
 ## 1. Prepare PostgreSQL
 
-The backup role must be able to connect to the direct PostgreSQL member and run
-`pg_basebackup`. When using the local `postgres` OS account with peer
-authentication, the supplied systemd drop-ins need no password file.
+The backup role must be able to connect to PostgreSQL. Physical mode requires
+replication access for `pg_basebackup`. Logical mode requires `CONNECT` plus
+enough privileges to read every selected object; a superuser-equivalent backup
+role is simplest but should be protected accordingly. When using the local
+`postgres` OS account with peer authentication, the supplied systemd drop-ins
+need no password file.
 
 For a dedicated database role, grant `REPLICATION`, allow the connection in
 `pg_hba.conf`, and store credentials in a protected driver secret file or a
 PostgreSQL-supported credential mechanism. Test the exact service identity.
 
-A standby can take a base backup when PostgreSQL is configured for it and the
-required WAL is available. Backmaster therefore points to the local member port
-(for example Patroni on `5431`), not HAProxy on `5432`.
+A standby can take a physical base backup when PostgreSQL is configured for it
+and the required WAL is available. Logical dumps can also run against a standby,
+but long dumps may conflict with recovery and query cancellation settings. For
+fleet fallback, point each node to its local member port (for example Patroni on
+`5431`) and test the complete workload there rather than using HAProxy.
 
 ## 2. Create the files
 
@@ -47,7 +57,20 @@ sudo install -m 0640 -o root -g postgres \
 ```
 
 Edit all four files. Ensure `INSTANCE_NAME=production-postgres` matches the
-instance filename and `NODE_NAME` is correct on each machine.
+instance filename and `NODE_NAME` is correct on each machine. In the driver
+file, select `PG_BACKUP_MODE=physical` or `PG_BACKUP_MODE=logical`. Logical mode
+accepts exact newline-delimited filters:
+
+```bash
+PG_BACKUP_MODE=logical
+PGDATABASE=postgres
+PG_DATABASE_INCLUDE=$'backmaster\nmatrix\nsynapse'
+PG_DATABASE_EXCLUDE=$'scratch\ntest'
+```
+
+An empty include list selects every connectable non-template database.
+Exclusions take precedence. Backmaster always includes `globals.sql.gz` for
+roles and tablespaces, even when database filtering is used.
 
 ## 3. Install the service identity drop-ins
 
@@ -85,7 +108,11 @@ sudo systemctl daemon-reload
 On non-Patroni systems, replace `patroni.service` with the appropriate local
 PostgreSQL unit or omit that ordering line.
 
-## 4. Enable continuous WAL archival
+## 4. Enable continuous WAL archival (physical mode only)
+
+Skip this section for logical instances. Logical dumps neither require nor use
+WAL archival, and the driver rejects `wal-archive` and `wal-restore` when
+`PG_BACKUP_MODE=logical`.
 
 In Patroni configuration:
 
@@ -131,6 +158,9 @@ sudo -u postgres backmaster exporter production-postgres latest-epoch
 
 Run `backmaster health production-postgres` again. Then complete the
 [restore runbook](postgres-restore.md) on an isolated host.
+
+For logical mode, inspect `payload/databases.json` in the exported backup. It is
+the authoritative map from original database names to safe dump filenames.
 
 ## 6. Schedule one node
 
@@ -185,10 +215,12 @@ the preferred attempt, not by disabling Consul.
 
 ## PostgreSQL-specific sizing
 
-Local peak usage is approximately one compressed base backup plus metadata and
-temporary WAL compression. A failed export intentionally keeps the `.ready`
-stage, so reserve capacity for that stage until publication can resume.
+Local peak usage is approximately one complete staged backup plus metadata. A
+failed export intentionally keeps the `.ready` stage, so reserve capacity for
+that stage until publication can resume.
 
-Network use includes the base backup upload and continuous WAL. CPU use depends
-on `PG_COMPRESSION`; increase compression only after measuring backup duration,
-source load, and restore speed.
+Physical network use includes the base backup and continuous WAL; CPU use
+depends on `PG_COMPRESSION`. Logical dumps run sequentially, so each database is
+transactionally consistent on its own, but the set is not one cluster-wide
+snapshot. CPU and size depend on `PG_LOGICAL_COMPRESSION`. Measure source load,
+backup duration, staging space, and restore speed for the chosen mode.

@@ -65,13 +65,37 @@ sudo -u postgres pg_isready \
 Check that `PGPORT` points to the local member, socket permissions allow access,
 and PostgreSQL/Patroni is running.
 
-### `pg_basebackup` authentication or permission failure
+### `pg_basebackup` authentication or permission failure (physical)
 
 Test `pg_basebackup` manually with the configured host, port, and role. Confirm
 the database role has replication permission and `pg_hba.conf` allows the
 connection. Avoid silently switching the backup to a load-balanced endpoint.
 
+### `included database does not exist or cannot be dumped` (logical)
+
+Every non-empty line in `PG_DATABASE_INCLUDE` must exactly match a connectable,
+non-template database. Check the effective configuration and list databases as
+the service user. Backmaster fails rather than silently omitting a requested
+database.
+
+### `database filters selected no databases` (logical)
+
+The include/exclude combination removed every database. Exclusions take
+precedence over includes. Correct the exact-name lists; do not treat a
+globals-only stage as a complete logical database backup.
+
+### `pg_dump` or `pg_dumpall` permission failure (logical)
+
+Test the failing client command as the systemd service identity. The database
+role needs `CONNECT` and enough privileges to read every selected object.
+`pg_dumpall --globals-only` also needs access to cluster-wide role and
+tablespace metadata. Confirm that every required extension exists on the
+restore target during a drill.
+
 ### WAL archive failures
+
+WAL commands are available only when `PG_BACKUP_MODE=physical`. Do not configure
+Patroni `archive_command` to use a logical Backmaster instance.
 
 Inspect PostgreSQL:
 
