@@ -134,6 +134,37 @@ Payload without a manifest is intentionally incomplete. Keep the local `.ready`
 stage and rerun after fixing connectivity. The exporter will republish and write
 the manifest last.
 
+## AzCopy exporter
+
+See the [AzCopy exporter reference](../exporters/azcopy.md) for configuration,
+authentication, catalogue behavior, and retention.
+
+### Connectivity or automatic login fails
+
+Run connectivity as the systemd service identity. Confirm that its protected
+secret file is readable and that `AZCOPY_AUTO_LOGIN_TYPE` matches the intended
+managed-identity or service-principal flow. Service principals require the
+application ID, tenant ID, and client secret. A SAS belongs in
+`AZCOPY_SAS_TOKEN` or the destination URL, never both.
+
+The identity needs data-plane list, read, write, and delete access below the
+configured Blob container or prefix. Azure role assignments can take several
+minutes to propagate.
+
+### AzCopy reports an invalid URL or authorization signature
+
+`AZCOPY_DESTINATION` must be an HTTPS Blob container URL and may include an
+instance-specific path. Quote SAS strings in the secret file. Backmaster adds
+the query string after its URL-encoded blob path; do not percent-encode the SAS
+again.
+
+### Inspect AzCopy transfer details
+
+Review the service journal first. If deeper transfer diagnostics are needed,
+set `AZCOPY_LOG_LOCATION` and `AZCOPY_JOB_PLAN_LOCATION` to protected writable
+directories outside the backup stage, reproduce the failure, and inspect those
+files. They may contain storage names and operational metadata.
+
 ## Disk space
 
 Check the stage filesystem:
@@ -160,7 +191,7 @@ Do not include secret contents. Useful output is:
 
 ```bash
 backmaster --version
-dpkg-query -W 'backmaster*' 'rclone' 'postgresql-client*'
+dpkg-query -W 'backmaster*' 'azcopy' 'rclone' 'postgresql-client*'
 systemctl cat backmaster@production-postgres.service
 systemctl cat backmaster@production-postgres.timer
 journalctl -u backmaster@production-postgres.service -n 200 --no-pager

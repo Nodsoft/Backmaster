@@ -4,9 +4,9 @@ Backmaster is a modular, fleet-oriented backup orchestrator. A **driver** create
 a consistent local backup, an **exporter** publishes it, and the core coordinates
 naming, staging, distributed locking, fallback, retention, and health checks.
 
-PostgreSQL and rclone are the first bundled modules. The rclone exporter works
-with Azure Blob Storage and other rclone backends; adding MongoDB, mail, or a new
-storage service does not require changing the core.
+PostgreSQL is the first bundled driver. Exporters are available for Microsoft's
+AzCopy and for rclone; adding MongoDB, mail, or a new storage service does not
+require changing the core.
 
 ## Start here
 
@@ -16,6 +16,7 @@ storage service does not require changing the core.
 | Configure an instance | [Configuration reference](docs/guides/configuration.md) |
 | Back up PostgreSQL/Patroni | [PostgreSQL driver](docs/drivers/postgresql.md) |
 | Configure Azure Blob or another destination | [rclone exporter](docs/exporters/rclone.md) |
+| Use Microsoft's Azure-native transfer tool | [AzCopy exporter](docs/exporters/azcopy.md) |
 | Schedule, monitor, and maintain backups | [Operations guide](docs/guides/operations.md) |
 | Restore PostgreSQL or perform PITR | [PostgreSQL restore runbook](docs/guides/postgres-restore.md) |
 | Diagnose a failure | [Troubleshooting](docs/guides/troubleshooting.md) |
@@ -39,6 +40,10 @@ The `backmaster` metapackage installs:
 | `backmaster-driver-postgres` | Physical/WAL and logical PostgreSQL backups |
 | `backmaster-exporter-rclone` | Azure Blob and other rclone destinations |
 | `backmaster` | Convenience metapackage for all three components |
+
+Azure-only deployments may install `backmaster-exporter-azcopy` instead of the
+rclone package. The `backmaster` metapackage retains rclone as its default
+exporter for backward-compatible upgrades.
 
 Create three configuration files for an instance named `production-postgres`:
 

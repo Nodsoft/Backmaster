@@ -22,7 +22,8 @@ fi
 readonly MAINTAINER="Nodsoft Systems <packages@nodsoft.net>"
 readonly CORE_PACKAGE="backmaster-core"
 readonly DRIVER_PACKAGE="backmaster-driver-postgres"
-readonly EXPORTER_PACKAGE="backmaster-exporter-rclone"
+readonly RCLONE_EXPORTER_PACKAGE="backmaster-exporter-rclone"
+readonly AZCOPY_EXPORTER_PACKAGE="backmaster-exporter-azcopy"
 readonly META_PACKAGE="backmaster"
 
 package_root() { printf '%s/%s\n' "$BUILD_ROOT" "$1"; }
@@ -152,35 +153,56 @@ write_control "$DRIVER_PACKAGE" \
 Replaces: $META_PACKAGE (<< $VERSION)"
 
 # Rclone exporter: destination-specific executable and configuration examples.
-exporter_root="$(package_root "$EXPORTER_PACKAGE")"
+exporter_root="$(package_root "$RCLONE_EXPORTER_PACKAGE")"
 install -d -m 0755 \
     "$exporter_root/DEBIAN" \
     "$exporter_root/usr/lib/backmaster/exporters/rclone" \
-    "$exporter_root/usr/share/doc/$EXPORTER_PACKAGE/exporters" \
-    "$exporter_root/usr/share/doc/$EXPORTER_PACKAGE/examples/config/exporters"
+    "$exporter_root/usr/share/doc/$RCLONE_EXPORTER_PACKAGE/exporters" \
+    "$exporter_root/usr/share/doc/$RCLONE_EXPORTER_PACKAGE/examples/config/exporters"
 install -m 0755 "$ROOT/exporters/rclone/exporter" \
     "$exporter_root/usr/lib/backmaster/exporters/rclone/exporter"
 install -m 0644 "$ROOT/docs/exporters/rclone.md" \
-    "$exporter_root/usr/share/doc/$EXPORTER_PACKAGE/exporters/rclone.md"
-cp -a "$ROOT/config/exporters/." \
-    "$exporter_root/usr/share/doc/$EXPORTER_PACKAGE/examples/config/exporters/"
-write_control "$EXPORTER_PACKAGE" \
+    "$exporter_root/usr/share/doc/$RCLONE_EXPORTER_PACKAGE/exporters/rclone.md"
+install -m 0644 "$ROOT/config/exporters/rclone.env.example" \
+    "$ROOT/config/exporters/rclone.secrets.env.example" \
+    "$exporter_root/usr/share/doc/$RCLONE_EXPORTER_PACKAGE/examples/config/exporters/"
+write_control "$RCLONE_EXPORTER_PACKAGE" \
     "$CORE_PACKAGE (= $VERSION), bash (>= 4.4), jq, rclone" \
     "rclone exporter for Backmaster" \
     "Publishes staged backups and recovery objects to Azure Blob or another rclone backend and maintains the remote catalogue and retention policy." \
     "Breaks: $META_PACKAGE (<< $VERSION)
 Replaces: $META_PACKAGE (<< $VERSION)"
 
+# AzCopy exporter: Azure Blob-native executable and configuration examples.
+azcopy_exporter_root="$(package_root "$AZCOPY_EXPORTER_PACKAGE")"
+install -d -m 0755 \
+    "$azcopy_exporter_root/DEBIAN" \
+    "$azcopy_exporter_root/usr/lib/backmaster/exporters/azcopy" \
+    "$azcopy_exporter_root/usr/share/doc/$AZCOPY_EXPORTER_PACKAGE/exporters" \
+    "$azcopy_exporter_root/usr/share/doc/$AZCOPY_EXPORTER_PACKAGE/examples/config/exporters"
+install -m 0755 "$ROOT/exporters/azcopy/exporter" \
+    "$azcopy_exporter_root/usr/lib/backmaster/exporters/azcopy/exporter"
+install -m 0644 "$ROOT/docs/exporters/azcopy.md" \
+    "$azcopy_exporter_root/usr/share/doc/$AZCOPY_EXPORTER_PACKAGE/exporters/azcopy.md"
+install -m 0644 "$ROOT/config/exporters/azcopy.env.example" \
+    "$ROOT/config/exporters/azcopy.secrets.env.example" \
+    "$azcopy_exporter_root/usr/share/doc/$AZCOPY_EXPORTER_PACKAGE/examples/config/exporters/"
+write_control "$AZCOPY_EXPORTER_PACKAGE" \
+    "$CORE_PACKAGE (= $VERSION), azcopy, bash (>= 4.4), findutils, jq" \
+    "AzCopy exporter for Backmaster" \
+    "Publishes staged backups and recovery objects directly to Azure Blob Storage with Microsoft AzCopy and maintains the remote catalogue and retention policy."
+
 # Compatibility/convenience metapackage: the original package name installs
 # the currently bundled flow while each component remains independently usable.
 meta_root="$(package_root "$META_PACKAGE")"
 install -d -m 0755 "$meta_root/DEBIAN"
 write_control "$META_PACKAGE" \
-    "$CORE_PACKAGE (= $VERSION), $DRIVER_PACKAGE (= $VERSION), $EXPORTER_PACKAGE (= $VERSION)" \
+    "$CORE_PACKAGE (= $VERSION), $DRIVER_PACKAGE (= $VERSION), $RCLONE_EXPORTER_PACKAGE (= $VERSION)" \
     "complete Backmaster backup system" \
     "Convenience metapackage installing the Backmaster core, PostgreSQL driver, and rclone exporter."
 
 build_package "$CORE_PACKAGE"
 build_package "$DRIVER_PACKAGE"
-build_package "$EXPORTER_PACKAGE"
+build_package "$RCLONE_EXPORTER_PACKAGE"
+build_package "$AZCOPY_EXPORTER_PACKAGE"
 build_package "$META_PACKAGE"
