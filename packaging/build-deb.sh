@@ -88,6 +88,7 @@ install -m 0644 \
     "$ROOT/docs/guides/index.md" \
     "$ROOT/docs/guides/installation.md" \
     "$ROOT/docs/guides/configuration.md" \
+    "$ROOT/docs/guides/secrets.md" \
     "$ROOT/docs/guides/operations.md" \
     "$ROOT/docs/guides/troubleshooting.md" \
     "$core_root/usr/share/doc/$CORE_PACKAGE/guides/"

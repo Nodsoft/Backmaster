@@ -14,6 +14,7 @@ require changing the core.
 | --- | --- |
 | Install Backmaster | [Installation](docs/guides/installation.md) |
 | Configure an instance | [Configuration reference](docs/guides/configuration.md) |
+| Protect and rotate credentials | [Secrets and credentials](docs/guides/secrets.md) |
 | Back up PostgreSQL/Patroni | [PostgreSQL driver](docs/drivers/postgresql.md) |
 | Configure Azure Blob or another destination | [rclone exporter](docs/exporters/rclone.md) |
 | Use Microsoft's Azure-native transfer tool | [AzCopy exporter](docs/exporters/azcopy.md) |
@@ -58,6 +59,9 @@ Put storage credentials in a separate file:
 ```text
 /etc/backmaster/secrets/production-postgres-exporter.env
 ```
+
+See [Secrets and credentials](docs/guides/secrets.md) for file precedence,
+ownership, permissions, managed identities, validation, and rotation.
 
 Then validate both ends and make an intentional first backup:
 

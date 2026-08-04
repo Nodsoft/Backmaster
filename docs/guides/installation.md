@@ -88,7 +88,9 @@ sudo install -d -m 0750 -o root -g postgres /etc/backmaster/secrets
 
 Copy the examples from the package documentation or this repository, remove the
 `.example` suffix, and edit every placeholder. The next guide explains every
-setting: [Configuration reference](configuration.md).
+setting: [Configuration reference](configuration.md). Before adding
+credentials, follow the ownership and permission model in
+[Secrets and credentials](secrets.md).
 
 ## Build packages locally
 
