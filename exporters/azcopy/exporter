@@ -91,18 +91,18 @@ object_url() {
 azcopy_upload() {
     azcopy copy "$1" "$(object_url "$2")" --from-to=LocalBlob \
         --overwrite=true --check-length=true --put-md5 \
-        --output-level=essential --log-level=ERROR
+        --output-level=essential --log-level=ERROR </dev/null
 }
 
 azcopy_download() {
     azcopy copy "$(object_url "$1")" "$2" --from-to=BlobLocal \
         --overwrite=true --check-length=true \
-        --output-level=essential --log-level=ERROR
+        --output-level=essential --log-level=ERROR </dev/null
 }
 
 list_manifest_paths() {
     azcopy list "$(object_url basebackups)" --machine-readable \
-        --output-level=essential --log-level=ERROR | \
+        --output-level=essential --log-level=ERROR </dev/null | \
         sed -nE 's/^(INFO: )?([^;]+\/manifest\.json); .*/\2/p'
 }
 
@@ -166,7 +166,8 @@ retain() {
             keep=$((keep + 1))
             if (( keep > MINIMUM_REDUNDANCY && epoch < cutoff )); then
                 azcopy remove "$(object_url "basebackups/$name")" \
-                    --recursive=true --output-level=essential --log-level=ERROR
+                    --recursive=true --output-level=essential --log-level=ERROR \
+                    </dev/null
             fi
         done <<<"$rows"
     fi
@@ -177,7 +178,7 @@ retain() {
             '+%Y-%m-%dT%H:%M:%SZ')"
         azcopy remove "$(object_url objects/wal)" --recursive=true \
             --include-before="$wal_cutoff" --output-level=essential \
-            --log-level=ERROR || true
+            --log-level=ERROR </dev/null || true
     fi
 }
 
@@ -200,7 +201,7 @@ get_file() {
 
 connectivitycheck() {
     azcopy list "$(object_url '')" --machine-readable \
-        --output-level=essential --log-level=ERROR >/dev/null
+        --output-level=essential --log-level=ERROR </dev/null >/dev/null
 }
 
 healthcheck() {

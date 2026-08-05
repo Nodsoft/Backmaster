@@ -7,7 +7,7 @@ temporary="$(mktemp -d)"
 readonly temporary
 trap 'rm -rf -- "$temporary"' EXIT
 mkdir -p "$temporary/bin" "$temporary/remote/basebackups" \
-    "$temporary/stage/payload"
+    "$temporary/stage/payload/databases"
 
 cat >"$temporary/config.env" <<'CONFIG'
 AZCOPY_DESTINATION=https://account.blob.core.windows.net/backups/backmaster
@@ -19,6 +19,8 @@ WAL_RETENTION_DAYS=15
 CONFIG
 printf 'archive\n' >"$temporary/stage/payload/base.tar.gz"
 printf 'space\n' >"$temporary/stage/payload/space name"
+printf 'database one\n' >"$temporary/stage/payload/databases/one.dump"
+printf 'database two\n' >"$temporary/stage/payload/databases/two.dump"
 printf 'sum\n' >"$temporary/stage/checksums.sha256"
 cat >"$temporary/stage/manifest.json" <<'JSON'
 {"schema":1,"backup_name":"2026-08-02-006-axon","created_epoch":1785683663}
@@ -57,6 +59,9 @@ key_from_url() {
 
 command="$1"
 shift
+# Real AzCopy may read stdin. Deliberately drain it so the test catches callers
+# that let an AzCopy child consume a surrounding file-enumeration stream.
+cat >/dev/null
 case "$command" in
     copy)
         source="$1"
@@ -105,6 +110,16 @@ run_exporter connectivitycheck
     exit 1
 }
 run_exporter publish "$temporary/stage" >/dev/null
+backup="$temporary/remote/basebackups/2026-08-02-006-axon"
+[[ -f "$backup/payload/databases/one.dump" && \
+    -f "$backup/payload/databases/two.dump" ]] || {
+    echo "nested database dumps were not uploaded" >&2
+    exit 1
+}
+[[ "$(find "$backup" -type f | wc -l)" -eq 6 ]] || {
+    echo "AzCopy did not upload every staged file" >&2
+    exit 1
+}
 last_put="$(grep '^PUT ' "$temporary/log" | tail -1)"
 [[ "$last_put" == *'/basebackups/2026-08-02-006-axon/manifest.json?sig=test' ]] || {
     echo "manifest was not uploaded last or SAS placement is invalid" >&2
