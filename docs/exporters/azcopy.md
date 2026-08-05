@@ -41,10 +41,10 @@ WAL_RETENTION_DAYS=15
 | --- | --- | --- |
 | `AZCOPY_DESTINATION` | required | HTTPS Blob container URL plus an optional instance-specific prefix |
 | `AZCOPY_SAS_TOKEN` | empty | Optional SAS query string; keep it in the secret file |
-| `RETENTION_DAYS` | `14` | Age after which eligible committed backups are removed |
-| `MINIMUM_REDUNDANCY` | `2` | Newest committed backups always preserved |
+| `RETENTION_DAYS` | `14` | Days to retain committed backups; `unlimited` or `none` disables their cleanup |
+| `MINIMUM_REDUNDANCY` | `2` | Minimum count of newest committed backups protected from age-based cleanup |
 | `HEALTHCHECK_MAX_AGE_SECONDS` | `129600` | Maximum acceptable committed-backup age |
-| `WAL_RETENTION_DAYS` | `15` | Age after which blobs below `objects/wal` are removed |
+| `WAL_RETENTION_DAYS` | `15` | Days to retain WAL; `unlimited` or `none` disables WAL cleanup |
 <!-- markdownlint-enable MD013 -->
 
 Use a destination prefix dedicated to one Backmaster instance. The exporter
@@ -152,10 +152,27 @@ sudo -u postgres backmaster health production-postgres
 ## Retention
 
 Base-backup retention sorts committed manifest data newest-first. It always
-preserves `MINIMUM_REDUNDANCY`, then recursively removes entries that are also
-older than `RETENTION_DAYS`. Uncommitted partial directories are ignored and
-should be handled with a separate Azure lifecycle rule or an operator cleanup
-after investigation.
+preserves the newest `MINIMUM_REDUNDANCY` entries, then recursively removes
+additional entries older than `RETENTION_DAYS`.
+
+Despite its name, `MINIMUM_REDUNDANCY` does not configure Azure replication.
+It is the minimum number of committed Backmaster backups retained in this
+instance's destination. With `RETENTION_DAYS=14` and `MINIMUM_REDUNDANCY=2`, the
+two newest backups are protected at any age; every older backup remains until it
+is older than 14 days. Use `0` only when no count-based safety floor is wanted.
+The setting applies to physical and logical base backups, but not to WAL.
+
+Set either cleanup clock independently to `unlimited` or its alias `none`:
+
+```bash
+RETENTION_DAYS=unlimited
+WAL_RETENTION_DAYS=unlimited
+```
+
+When `RETENTION_DAYS` is unlimited, `MINIMUM_REDUNDANCY` is irrelevant. Numeric
+`0` is a zero-day threshold, not an unlimited value. Uncommitted partial
+directories are ignored and should be handled with a separate Azure lifecycle
+rule or an operator cleanup after investigation.
 
 WAL retention calls `azcopy remove` recursively with an ISO 8601
 `--include-before` cutoff. Choose `WAL_RETENTION_DAYS` long enough to cover every

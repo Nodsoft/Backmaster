@@ -3,6 +3,16 @@ set -Eeuo pipefail
 
 die() { echo "rclone exporter: $*" >&2; exit 1; }
 
+normalize_retention() {
+    local variable="$1" value
+    value="${!variable}"
+    case "${value,,}" in
+        none|unlimited) printf -v "$variable" '%s' unlimited ;;
+        *) [[ "$value" =~ ^[0-9]+$ ]] || \
+            die "$variable must be a non-negative integer, unlimited, or none" ;;
+    esac
+}
+
 load_config() {
     : "${EXPORTER_CONFIG:?EXPORTER_CONFIG is required}"
     [[ -r "$EXPORTER_CONFIG" ]] || die "cannot read $EXPORTER_CONFIG"
@@ -20,6 +30,12 @@ load_config() {
     MINIMUM_REDUNDANCY="${MINIMUM_REDUNDANCY:-2}"
     HEALTHCHECK_MAX_AGE_SECONDS="${HEALTHCHECK_MAX_AGE_SECONDS:-129600}"
     WAL_RETENTION_DAYS="${WAL_RETENTION_DAYS:-15}"
+    normalize_retention RETENTION_DAYS
+    normalize_retention WAL_RETENTION_DAYS
+    [[ "$MINIMUM_REDUNDANCY" =~ ^[0-9]+$ ]] || \
+        die "MINIMUM_REDUNDANCY must be a non-negative integer"
+    [[ "$HEALTHCHECK_MAX_AGE_SECONDS" =~ ^[0-9]+$ ]] || \
+        die "HEALTHCHECK_MAX_AGE_SECONDS must be a non-negative integer"
 }
 
 manifest_rows() {
@@ -57,17 +73,22 @@ publish() {
 
 retain() {
     local cutoff rows keep epoch name
-    cutoff=$(( $(date +%s) - RETENTION_DAYS * 86400 ))
-    rows="$(manifest_rows | sort -nr)"
-    keep=0
-    while IFS=$'\t' read -r epoch name; do
-        [[ -n "$epoch" ]] || continue
-        keep=$((keep + 1))
-        if (( keep > MINIMUM_REDUNDANCY && epoch < cutoff )); then
-            rclone purge "${RCLONE_DESTINATION}/basebackups/${name}"
-        fi
-    done <<<"$rows"
-    rclone delete "${RCLONE_DESTINATION}/objects/wal" --min-age "${WAL_RETENTION_DAYS}d" --rmdirs || true
+    if [[ "$RETENTION_DAYS" != unlimited ]]; then
+        cutoff=$(( $(date +%s) - RETENTION_DAYS * 86400 ))
+        rows="$(manifest_rows | sort -nr)"
+        keep=0
+        while IFS=$'\t' read -r epoch name; do
+            [[ -n "$epoch" ]] || continue
+            keep=$((keep + 1))
+            if (( keep > MINIMUM_REDUNDANCY && epoch < cutoff )); then
+                rclone purge "${RCLONE_DESTINATION}/basebackups/${name}"
+            fi
+        done <<<"$rows"
+    fi
+    if [[ "$WAL_RETENTION_DAYS" != unlimited ]]; then
+        rclone delete "${RCLONE_DESTINATION}/objects/wal" \
+            --min-age "${WAL_RETENTION_DAYS}d" --rmdirs || true
+    fi
 }
 
 put_file() {

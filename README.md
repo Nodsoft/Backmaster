@@ -138,7 +138,8 @@ staging safety, or retention.
 - Credentials stay outside instance, driver, and exporter policy files.
 - A remote backup is complete only when its `manifest.json` exists.
 - Local staging is deleted only after successful publication.
-- Retention always preserves `MINIMUM_REDUNDANCY` newest completed backups.
+- Retention protects a configured minimum count of newest completed backups;
+  both base-backup and WAL cleanup can be set to `unlimited`.
 - PostgreSQL physical mode supports WAL/PITR; logical mode supports per-database
   selection.
 - Backups are not proven until restore drills are automated and monitored.

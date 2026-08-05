@@ -121,12 +121,22 @@ rclone lsf "$RCLONE_DESTINATION/basebackups" --dirs-only
 
 ## Retention
 
-Retention runs only after successful publication. Both bundled exporters:
+Retention runs only after successful publication. Both bundled exporters do
+the following:
 
 1. orders committed manifests newest first;
-2. always preserves the newest `MINIMUM_REDUNDANCY` backups;
+2. protects the newest `MINIMUM_REDUNDANCY` committed backups by count;
 3. removes additional base backups older than `RETENTION_DAYS`;
 4. removes WAL objects older than `WAL_RETENTION_DAYS`.
+
+The minimum-redundancy value is not a storage replica setting. It is a safety
+floor within one instance destination: `2` means that age-based cleanup cannot
+remove the newest two committed backups, even if both exceed the age limit. It
+does not protect WAL. A value of `0` removes that count guard.
+
+Use `unlimited` (or `none`) instead of a day count to disable base-backup or WAL
+cleanup independently. If `RETENTION_DAYS=unlimited`, the minimum-redundancy
+setting is unused. Numeric `0` remains an immediate zero-day threshold.
 
 Before shortening retention, confirm that the oldest base backup you intend to
 restore still has its required WAL range. Object-store versioning or immutability
