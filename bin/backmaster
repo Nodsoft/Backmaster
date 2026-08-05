@@ -52,6 +52,7 @@ load_instance() {
     CONSUL_LOCK_KEY="${CONSUL_LOCK_KEY:-service/backmaster/${INSTANCE_NAME}}"
     CONSUL_LOCK_TIMEOUT="${CONSUL_LOCK_TIMEOUT:-30s}"
     STAGING_ROOT="${STAGING_ROOT:-/var/lib/backmaster}"
+    BACKMASTER_STATE_DIRECTORY="${STAGING_ROOT%/}/${INSTANCE_NAME}"
     BACKUP_NAME_MODE="${BACKUP_NAME_MODE:-daily-time}"
     BACKUP_NAME_SUFFIX_MODE="${BACKUP_NAME_SUFFIX_MODE:-hostname}"
     case "$BACKUP_NAME_MODE" in daily|daily-serial|daily-time) ;; *) die "invalid_backup_name_mode value=$BACKUP_NAME_MODE";; esac
@@ -61,6 +62,7 @@ load_instance() {
         *) die "invalid_backup_name_suffix_mode value=$BACKUP_NAME_SUFFIX_MODE" ;;
     esac
     export MAX_AGE_SECONDS CONSUL_LOCK_KEY CONSUL_LOCK_TIMEOUT STAGING_ROOT
+    export BACKMASTER_STATE_DIRECTORY
     export DRIVER_EXEC EXPORTER_EXEC BACKUP_NAME_MODE BACKUP_NAME_SUFFIX_MODE
     export BACKUP_NAME_SUFFIX_VALUE INSTANCE_NAME NODE_NAME DRIVER EXPORTER
 }
@@ -126,9 +128,20 @@ export_stage() {
 
 prepare_stage() {
     local parent partial ready created
-    parent="${STAGING_ROOT}/${INSTANCE_NAME}"; mkdir -p "$parent"
-    partial="$(mktemp -d "${parent}/.${BACKUP_NAME}.partial.XXXXXX")"
-    mkdir "$partial/payload"
+    parent="${STAGING_ROOT}/${INSTANCE_NAME}"
+    if ! mkdir -p -- "$parent"; then
+        die "staging_parent_create_failed path=$parent hint=run_via_systemd_or_precreate_state_directory"
+    fi
+    [[ -d "$parent" ]] || die "staging_parent_not_directory path=$parent"
+    [[ -w "$parent" ]] || \
+        die "staging_parent_not_writable path=$parent hint=run_via_systemd_or_fix_ownership"
+    if ! partial="$(mktemp -d "${parent}/.${BACKUP_NAME}.partial.XXXXXX")"; then
+        die "stage_temp_create_failed parent=$parent"
+    fi
+    if ! mkdir -- "$partial/payload"; then
+        rm -rf -- "$partial"
+        die "stage_payload_create_failed path=$partial/payload"
+    fi
     if ! "$DRIVER_EXEC" prepare "$partial/payload" >&2; then rm -rf -- "$partial"; die "driver_prepare_failed"; fi
     (cd "$partial" && find payload -type f -print0 | sort -z | xargs -0 -r sha256sum > checksums.sha256)
     created="$(date +%s)"
@@ -139,7 +152,7 @@ prepare_stage() {
     ready="${parent}/${BACKUP_NAME}.ready"
     [[ ! -e "$ready" ]] || { rm -rf -- "$partial"; die "stage_already_exists path=$ready"; }
     mv "$partial" "$ready"
-    printf '%s\n' "$ready"
+    PREPARED_STAGE="$ready"
 }
 
 run_locked() {
@@ -152,7 +165,8 @@ run_locked() {
     if [[ "${FORCE_BACKUP:-0}" != 1 ]] && is_fresh; then log "level=info result=skipped reason=fresh_backup_exists"; return; fi
     resolve_backup_name
     log "level=info action=prepare_start driver=$DRIVER backup_name=$BACKUP_NAME"
-    stage="$(prepare_stage)"
+    prepare_stage
+    stage="$PREPARED_STAGE"
     log "level=info action=prepare_complete driver=$DRIVER stage=$stage"
     export_stage "$stage"
     "$EXPORTER_EXEC" retain

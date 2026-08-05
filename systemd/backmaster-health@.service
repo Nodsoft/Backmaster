@@ -13,4 +13,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
+StateDirectory=backmaster/%i
+StateDirectoryMode=0750
 ReadOnlyPaths=/etc/backmaster /usr/lib/backmaster
+ReadWritePaths=/var/lib/backmaster/%i

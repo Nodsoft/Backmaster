@@ -67,9 +67,13 @@ Then validate both ends and make an intentional first backup:
 
 ```bash
 sudo -u postgres backmaster connectivity production-postgres
-sudo -u postgres backmaster run production-postgres --force
+sudo systemctl start backmaster@production-postgres.service
 sudo -u postgres backmaster health production-postgres
 ```
+
+Run backups through systemd so `StateDirectory=` creates the instance staging
+directory for the unit's effective user. See [Operations](docs/guides/operations.md#direct-cli-runs)
+before invoking `backmaster run` directly.
 
 Do not enable an unattended timer until those commands succeed and an isolated
 restore drill has passed.

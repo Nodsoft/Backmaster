@@ -13,6 +13,24 @@ normalize_retention() {
     esac
 }
 
+configure_work_directories() {
+    local default_root directory variable
+    default_root="${BACKMASTER_STATE_DIRECTORY:-${STAGING_ROOT:-/var/lib/backmaster}/${INSTANCE_NAME:-default}}/azcopy"
+    AZCOPY_LOG_LOCATION="${AZCOPY_LOG_LOCATION:-$default_root/logs}"
+    AZCOPY_JOB_PLAN_LOCATION="${AZCOPY_JOB_PLAN_LOCATION:-$default_root/plans}"
+
+    for variable in AZCOPY_LOG_LOCATION AZCOPY_JOB_PLAN_LOCATION; do
+        directory="${!variable}"
+        [[ "$directory" == /* ]] || die "$variable must be an absolute path"
+        if ! mkdir -p -- "$directory"; then
+            die "cannot create $variable: $directory"
+        fi
+        [[ -d "$directory" && -w "$directory" ]] || \
+            die "$variable is not a writable directory: $directory"
+    done
+    export AZCOPY_LOG_LOCATION AZCOPY_JOB_PLAN_LOCATION
+}
+
 load_config() {
     : "${EXPORTER_CONFIG:?EXPORTER_CONFIG is required}"
     [[ -r "$EXPORTER_CONFIG" ]] || die "cannot read $EXPORTER_CONFIG"
@@ -43,6 +61,7 @@ load_config() {
     for value in MINIMUM_REDUNDANCY HEALTHCHECK_MAX_AGE_SECONDS; do
         [[ "${!value}" =~ ^[0-9]+$ ]] || die "$value must be a non-negative integer"
     done
+    configure_work_directories
 }
 
 encode_path() {

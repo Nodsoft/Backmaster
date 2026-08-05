@@ -146,8 +146,13 @@ Run the checks as the same Unix user as systemd:
 ```bash
 sudo -u postgres backmaster connectivity production-postgres
 sudo -u postgres backmaster health production-postgres
-sudo -u postgres backmaster run production-postgres --force
+sudo systemctl start backmaster@production-postgres.service
 ```
+
+Starting the service is important: systemd creates the configured instance
+state directory with the ownership of the effective `User=postgres` drop-in.
+For a direct CLI run, first follow the
+[manual state-directory procedure](../guides/operations.md#direct-cli-runs).
 
 The first `health` may report no completed export; that is expected before the
 first successful backup. After `run`, inspect the journal and remote manifest:
