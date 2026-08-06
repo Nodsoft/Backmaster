@@ -21,13 +21,21 @@ new backup.
 
 ## Scheduling with systemd
 
-The package installs two templates:
+The package installs reusable backup and health service templates plus an
+hourly health timer. It deliberately does not install a backup timer because
+backup cadence is deployment-specific:
 
 - `backmaster@INSTANCE.service` performs a backup attempt;
-- `backmaster-health@INSTANCE.service` performs a health check.
+- `backmaster-health@INSTANCE.service` performs a health check;
+- `backmaster-health@INSTANCE.timer` triggers the health check hourly.
 
-Their timers are persistent, so a missed run is started after the host returns.
-Inspect the effective schedule and all drop-ins:
+Create and enable an instance-specific `backmaster@INSTANCE.timer` only after a
+manual service run and restore test succeed. The complete
+[systemd units and timers guide](systemd.md) covers service identities,
+PostgreSQL drop-ins, timer creation, calendar overrides, persistent catch-up,
+fleet fallback, sandbox paths, verification, and troubleshooting.
+
+Inspect the effective units and schedules:
 
 ```bash
 systemctl cat backmaster@production-postgres.service

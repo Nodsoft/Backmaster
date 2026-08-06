@@ -42,6 +42,7 @@ contents backmaster-core | grep '/usr/bin/backmaster$' >/dev/null
 contents backmaster-core | grep '/usr/share/doc/backmaster-core/guides/installation.md$' >/dev/null
 contents backmaster-core | grep '/usr/share/doc/backmaster-core/guides/configuration.md$' >/dev/null
 contents backmaster-core | grep '/usr/share/doc/backmaster-core/guides/secrets.md$' >/dev/null
+contents backmaster-core | grep '/usr/share/doc/backmaster-core/guides/systemd.md$' >/dev/null
 contents backmaster-core | grep '/usr/share/doc/backmaster-core/guides/operations.md$' >/dev/null
 contents backmaster-core | grep '/usr/share/doc/backmaster-core/guides/troubleshooting.md$' >/dev/null
 contents backmaster-core | grep '/usr/share/doc/backmaster-core/drivers/index.md$' >/dev/null

@@ -5,6 +5,7 @@ Task-oriented Backmaster documentation:
 - [Installation](installation.md)
 - [Configuration reference](configuration.md)
 - [Secrets and credentials](secrets.md)
+- [systemd units and timers](systemd.md)
 - [Operations](operations.md)
 - [PostgreSQL restore and PITR](postgres-restore.md)
 - [Troubleshooting](troubleshooting.md)
