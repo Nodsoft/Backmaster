@@ -114,6 +114,30 @@ The [PostgreSQL driver reference](../drivers/postgresql.md#postgresql-client-env
 lists every supported libpq pass-through variable and explains which connection
 fields Backmaster sets explicitly.
 
+## MongoDB driver credentials
+
+Keep `MONGODB_URI` free of credentials and put authentication material in the
+driver secret file:
+
+```bash
+MONGODB_USERNAME=backmaster
+MONGODB_PASSWORD='REPLACE_ME'
+# MONGODB_AUTH_MECHANISM=SCRAM-SHA-256
+```
+
+X.509 deployments may instead reference a protected client PEM with
+`MONGODB_TLS_CERTIFICATE_KEY_FILE` and, when needed,
+`MONGODB_TLS_CERTIFICATE_KEY_FILE_PASSWORD`. AWS IAM variables supported by the
+MongoDB tools may also be supplied through the secret file. Prefer workload
+identity and short-lived credentials over static passwords.
+
+MongoDB's non-interactive command-line tools receive connection options as
+arguments. On hosts where users can inspect one another's process arguments,
+apply operating-system process isolation and use a dedicated service identity.
+Never log an expanded command or enable shell tracing. See the
+[MongoDB driver reference](../drivers/mongodb.md#configuration-reference) for
+the complete authentication and TLS surface.
+
 ## Exporter examples
 
 An rclone Azure account-key file may contain:
@@ -158,6 +182,9 @@ Validate a new credential without creating a backup:
 sudo -u postgres backmaster connectivity production-postgres
 sudo -u postgres backmaster health production-postgres
 ```
+
+For a default-user MongoDB instance, run the equivalent commands as
+`backmaster`.
 
 Each Backmaster invocation reads the files again, so a oneshot service does not
 need a daemon restart after rotation. Replace a secret atomically, preserving

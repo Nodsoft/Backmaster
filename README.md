@@ -4,9 +4,9 @@ Backmaster is a modular, fleet-oriented backup orchestrator. A **driver** create
 a consistent local backup, an **exporter** publishes it, and the core coordinates
 naming, staging, distributed locking, fallback, retention, and health checks.
 
-PostgreSQL is the first bundled driver. Exporters are available for Microsoft's
-AzCopy and for rclone; adding MongoDB, mail, or a new storage service does not
-require changing the core.
+Bundled drivers cover PostgreSQL and MongoDB. Exporters are available for
+Microsoft's AzCopy and for rclone; adding another source or storage service
+does not require changing the core.
 
 ## Start here
 
@@ -17,10 +17,12 @@ require changing the core.
 | Protect and rotate credentials | [Secrets and credentials](docs/guides/secrets.md) |
 | Set up systemd services and schedules | [systemd units and timers](docs/guides/systemd.md) |
 | Back up PostgreSQL/Patroni | [PostgreSQL driver](docs/drivers/postgresql.md) |
+| Back up MongoDB | [MongoDB driver](docs/drivers/mongodb.md) |
 | Configure Azure Blob or another destination | [rclone exporter](docs/exporters/rclone.md) |
 | Use Microsoft's Azure-native transfer tool | [AzCopy exporter](docs/exporters/azcopy.md) |
 | Schedule, monitor, and maintain backups | [Operations guide](docs/guides/operations.md) |
 | Restore PostgreSQL or perform PITR | [PostgreSQL restore runbook](docs/guides/postgres-restore.md) |
+| Restore MongoDB | [MongoDB restore runbook](docs/guides/mongodb-restore.md) |
 | Diagnose a failure | [Troubleshooting](docs/guides/troubleshooting.md) |
 | Write a driver | [Driver contract](docs/drivers/index.md) |
 | Write an exporter | [Exporter contract](docs/exporters/index.md) |
@@ -34,14 +36,15 @@ sudo apt update
 sudo apt install backmaster
 ```
 
-The `backmaster` metapackage installs:
+Available packages include:
 
 | Package | Purpose |
 | --- | --- |
 | `backmaster-core` | CLI, lifecycle, staging, and systemd units |
 | `backmaster-driver-postgres` | Physical/WAL and logical PostgreSQL backups |
+| `backmaster-driver-mongodb` | Filtered, database-granular MongoDB dumps |
 | `backmaster-exporter-rclone` | Azure Blob and other rclone destinations |
-| `backmaster` | Convenience metapackage for all three components |
+| `backmaster` | Convenience metapackage for core, PostgreSQL, and rclone |
 
 Azure-only deployments may install `backmaster-exporter-azcopy` instead of the
 rclone package. The `backmaster` metapackage retains rclone as its default
@@ -148,4 +151,6 @@ staging safety, or retention.
   both base-backup and WAL cleanup can be set to `unlimited`.
 - PostgreSQL physical mode supports WAL/PITR; logical mode supports per-database
   selection.
+- MongoDB supports per-database filtering and archive or collection-file dumps;
+  it does not claim deployment-wide PITR.
 - Backups are not proven until restore drills are automated and monitored.

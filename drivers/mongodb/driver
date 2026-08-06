@@ -1,0 +1,218 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+die() { echo "mongodb driver: $*" >&2; exit 1; }
+
+is_boolean() { [[ "$1" == true || "$1" == false ]]; }
+
+load_config() {
+    : "${DRIVER_CONFIG:?DRIVER_CONFIG is required}"
+    [[ -r "$DRIVER_CONFIG" ]] || die "cannot read $DRIVER_CONFIG"
+    set -a
+    # shellcheck disable=SC1090
+    source "$DRIVER_CONFIG"
+    if [[ -n "${DRIVER_SECRET_FILE:-}" ]]; then
+        [[ -r "$DRIVER_SECRET_FILE" ]] || die "cannot read $DRIVER_SECRET_FILE"
+        # shellcheck disable=SC1090
+        source "$DRIVER_SECRET_FILE"
+    fi
+    set +a
+
+    : "${MONGODB_URI:?MONGODB_URI is required}"
+    MONGODB_AUTH_DATABASE="${MONGODB_AUTH_DATABASE:-admin}"
+    MONGODB_DUMP_FORMAT="${MONGODB_DUMP_FORMAT:-archive}"
+    MONGODB_FILE_NAMING="${MONGODB_FILE_NAMING:-plain}"
+    MONGODB_GZIP="${MONGODB_GZIP:-true}"
+    MONGODB_NUM_PARALLEL_COLLECTIONS="${MONGODB_NUM_PARALLEL_COLLECTIONS:-4}"
+    MONGODB_INCLUDE_SYSTEM_DATABASES="${MONGODB_INCLUDE_SYSTEM_DATABASES:-false}"
+    MONGODB_DATABASE_INCLUDE="${MONGODB_DATABASE_INCLUDE:-}"
+    MONGODB_DATABASE_EXCLUDE="${MONGODB_DATABASE_EXCLUDE:-}"
+    MONGODB_DUMP_DB_USERS_AND_ROLES="${MONGODB_DUMP_DB_USERS_AND_ROLES:-false}"
+
+    [[ "$MONGODB_DUMP_FORMAT" == archive || "$MONGODB_DUMP_FORMAT" == directory ]] || \
+        die "MONGODB_DUMP_FORMAT must be archive or directory"
+    [[ "$MONGODB_FILE_NAMING" == sha256 || "$MONGODB_FILE_NAMING" == plain ]] || \
+        die "MONGODB_FILE_NAMING must be sha256 or plain"
+    is_boolean "$MONGODB_GZIP" || die "MONGODB_GZIP must be true or false"
+    is_boolean "$MONGODB_INCLUDE_SYSTEM_DATABASES" || \
+        die "MONGODB_INCLUDE_SYSTEM_DATABASES must be true or false"
+    is_boolean "$MONGODB_DUMP_DB_USERS_AND_ROLES" || \
+        die "MONGODB_DUMP_DB_USERS_AND_ROLES must be true or false"
+    [[ "$MONGODB_NUM_PARALLEL_COLLECTIONS" =~ ^[1-9][0-9]*$ ]] || \
+        die "MONGODB_NUM_PARALLEL_COLLECTIONS must be a positive integer"
+}
+
+connection_arguments() {
+    CONNECTION_ARGUMENTS=(--uri="$MONGODB_URI")
+    if [[ -n "${MONGODB_USERNAME:-}" ]]; then
+        CONNECTION_ARGUMENTS+=(--username="$MONGODB_USERNAME")
+    fi
+    if [[ -n "${MONGODB_PASSWORD:-}" ]]; then
+        CONNECTION_ARGUMENTS+=(--password="$MONGODB_PASSWORD")
+    fi
+    if [[ -n "${MONGODB_AUTH_DATABASE:-}" ]]; then
+        CONNECTION_ARGUMENTS+=(--authenticationDatabase="$MONGODB_AUTH_DATABASE")
+    fi
+    if [[ -n "${MONGODB_AUTH_MECHANISM:-}" ]]; then
+        CONNECTION_ARGUMENTS+=(--authenticationMechanism="$MONGODB_AUTH_MECHANISM")
+    fi
+    if [[ -n "${MONGODB_TLS_CA_FILE:-}" ]]; then
+        CONNECTION_ARGUMENTS+=(--tls --tlsCAFile="$MONGODB_TLS_CA_FILE")
+    fi
+    if [[ -n "${MONGODB_TLS_CERTIFICATE_KEY_FILE:-}" ]]; then
+        CONNECTION_ARGUMENTS+=(--tls --tlsCertificateKeyFile="$MONGODB_TLS_CERTIFICATE_KEY_FILE")
+    fi
+    if [[ -n "${MONGODB_TLS_CERTIFICATE_KEY_FILE_PASSWORD:-}" ]]; then
+        CONNECTION_ARGUMENTS+=(--tlsCertificateKeyFilePassword="$MONGODB_TLS_CERTIFICATE_KEY_FILE_PASSWORD")
+    fi
+    if [[ "${MONGODB_TLS_INSECURE:-false}" == true ]]; then
+        CONNECTION_ARGUMENTS+=(--tls --tlsInsecure)
+    elif [[ "${MONGODB_TLS_INSECURE:-false}" != false ]]; then
+        die "MONGODB_TLS_INSECURE must be true or false"
+    fi
+}
+
+discover() {
+    local expression output
+    connection_arguments
+    expression='const l=db.adminCommand({listDatabases:1,nameOnly:true,authorizedDatabases:true}); if (!l.ok) throw new Error(l.errmsg); const h=db.adminCommand({hello:1}); print(JSON.stringify({databases:l.databases.map(x=>x.name).sort(),topology:h.msg==="isdbgrid"?"sharded":(h.setName?"replica-set":"standalone"),set_name:h.setName||null,writable_primary:h.isWritablePrimary===true}));'
+    output="$(mongosh "${CONNECTION_ARGUMENTS[@]}" --quiet --norc --eval "$expression")" || \
+        die "could not query MongoDB deployment"
+    jq -e '.databases | type == "array" and all(.[]; type == "string")' \
+        >/dev/null <<<"$output" || die "MongoDB discovery returned invalid JSON"
+    DISCOVERY_JSON="$output"
+}
+
+database_is_listed() {
+    local database="$1" list="$2" item
+    while IFS= read -r item || [[ -n "$item" ]]; do
+        [[ -n "$item" && "$item" == "$database" ]] && return 0
+    done <<<"$list"
+    return 1
+}
+
+database_is_system() {
+    [[ "$1" == admin || "$1" == config || "$1" == local ]]
+}
+
+validate_includes() {
+    local available="$1" requested
+    [[ -n "$MONGODB_DATABASE_INCLUDE" ]] || return 0
+    while IFS= read -r requested || [[ -n "$requested" ]]; do
+        [[ -n "$requested" ]] || continue
+        database_is_listed "$requested" "$available" || \
+            die "included database does not exist or is not authorized: $requested"
+    done <<<"$MONGODB_DATABASE_INCLUDE"
+}
+
+dump_database() {
+    local database="$1" destination="$2" output="$3"
+    local -a arguments
+    connection_arguments
+    arguments=("${CONNECTION_ARGUMENTS[@]}" --db="$database"
+        --numParallelCollections="$MONGODB_NUM_PARALLEL_COLLECTIONS")
+    [[ "$MONGODB_GZIP" == false ]] || arguments+=(--gzip)
+    [[ "$MONGODB_DUMP_DB_USERS_AND_ROLES" == false ]] || \
+        arguments+=(--dumpDbUsersAndRoles)
+    if [[ -n "${MONGODB_READ_PREFERENCE:-}" ]]; then
+        arguments+=(--readPreference="$MONGODB_READ_PREFERENCE")
+    fi
+    case "$MONGODB_DUMP_FORMAT" in
+        archive) arguments+=(--archive="$destination/$output") ;;
+        directory) arguments+=(--out="$destination/$output") ;;
+    esac
+    mongodump "${arguments[@]}"
+}
+
+prepare() {
+    local destination="$1" available database digest extension output index temporary count=0
+    [[ -d "$destination" ]] || die "staging payload does not exist: $destination"
+    [[ -z "$(find "$destination" -mindepth 1 -print -quit)" ]] || \
+        die "staging payload is not empty"
+    discover
+    available="$(jq -r '.databases[]' <<<"$DISCOVERY_JSON")"
+    validate_includes "$available"
+
+    case "$MONGODB_DUMP_FORMAT:$MONGODB_GZIP" in
+        archive:true) extension=archive.gz ;;
+        archive:false) extension=archive ;;
+        directory:*) extension=dump ;;
+    esac
+    mkdir -p "$destination/databases"
+    index="$destination/databases.json"
+    jq -n --arg dump_format "$MONGODB_DUMP_FORMAT" \
+        --arg file_naming "$MONGODB_FILE_NAMING" \
+        --argjson gzip "$MONGODB_GZIP" \
+        --argjson parallel "$MONGODB_NUM_PARALLEL_COLLECTIONS" \
+        --argjson discovery "$DISCOVERY_JSON" \
+        '{format:"backmaster-mongodb-logical-v1",dump_format:$dump_format,
+          file_naming:$file_naming,gzip:$gzip,
+          num_parallel_collections:$parallel,source_topology:$discovery.topology,
+          source_set_name:$discovery.set_name,databases:[]}' >"$index"
+
+    while IFS= read -r database || [[ -n "$database" ]]; do
+        [[ -n "$database" ]] || continue
+        if [[ -n "$MONGODB_DATABASE_INCLUDE" ]] && \
+            ! database_is_listed "$database" "$MONGODB_DATABASE_INCLUDE"; then
+            continue
+        fi
+        if database_is_listed "$database" "$MONGODB_DATABASE_EXCLUDE"; then
+            continue
+        fi
+        if [[ "$MONGODB_INCLUDE_SYSTEM_DATABASES" == false ]] && \
+            database_is_system "$database"; then
+            continue
+        fi
+        case "$MONGODB_FILE_NAMING" in
+            sha256)
+                digest="$(printf '%s' "$database" | sha256sum)"
+                output="${digest%% *}.$extension"
+                ;;
+            plain)
+                [[ "$database" != *'/'* && "$database" != *$'\n'* && \
+                    "$database" != *$'\r'* && "$database" != . && \
+                    "$database" != .. ]] || \
+                    die "database name cannot be used as a plain path: $database"
+                output="$database.$extension"
+                ;;
+        esac
+        dump_database "$database" "$destination/databases" "$output" || \
+            die "mongodump failed for database: $database"
+        [[ -e "$destination/databases/$output" ]] || \
+            die "mongodump did not create expected output for database: $database"
+        temporary="${index}.tmp"
+        jq --arg database "$database" --arg path "databases/$output" \
+            '.databases += [{database:$database,path:$path}]' \
+            "$index" >"$temporary"
+        mv -- "$temporary" "$index"
+        count=$((count + 1))
+    done <<<"$available"
+    ((count > 0)) || die "database filters selected no databases"
+}
+
+connectivitycheck() {
+    command -v mongosh >/dev/null || die "mongosh is unavailable"
+    command -v mongodump >/dev/null || die "mongodump is unavailable"
+    command -v jq >/dev/null || die "jq is unavailable"
+    discover
+}
+
+healthcheck() {
+    connectivitycheck
+    jq -r '"OK: MongoDB is reachable; topology=" + .topology +
+        (if .set_name then " set=" + .set_name else "" end) +
+        " visible_databases=" + (.databases | length | tostring)' \
+        <<<"$DISCOVERY_JSON"
+}
+
+main() {
+    load_config
+    case "${1:-}" in
+        prepare) [[ $# -eq 2 ]] || exit 64; prepare "$2" ;;
+        connectivitycheck) connectivitycheck ;;
+        healthcheck) healthcheck ;;
+        *) die "unsupported command: ${1:-none}" ;;
+    esac
+}
+
+main "$@"

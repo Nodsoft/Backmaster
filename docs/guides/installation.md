@@ -14,7 +14,8 @@ Consul, jq, systemd, coreutils, and findutils. A usable flow additionally needs:
 - an exporter package and access to its destination;
 - synchronized system clocks on all participating nodes.
 
-The PostgreSQL driver depends on `postgresql-client` and `gzip`. The rclone
+The PostgreSQL driver depends on `postgresql-client` and `gzip`. The MongoDB
+driver depends on `mongodb-mongosh` and `mongodb-database-tools`. The rclone
 exporter depends on `rclone`; the AzCopy exporter depends on `azcopy`.
 
 ## Install Debian packages
@@ -44,6 +45,19 @@ sudo apt install \
   backmaster-exporter-azcopy
 ```
 
+For MongoDB, select its driver explicitly:
+
+```bash
+sudo apt install \
+  backmaster-core \
+  backmaster-driver-mongodb \
+  backmaster-exporter-rclone
+```
+
+The compatibility `backmaster` metapackage continues to select PostgreSQL and
+rclone. Install `backmaster-driver-mongodb` alongside it or use the explicit
+component transaction above.
+
 All component packages require the exact same core version. Upgrade them from
 the same repository transaction rather than mixing files from different builds.
 
@@ -71,9 +85,10 @@ convenience metapackage.
 | `/var/lib/backmaster/INSTANCE/` | Local staging state |
 | `/usr/share/doc/backmaster-*/` | Component documentation and examples |
 
-The package creates a generic `backmaster` system user. A source-specific
-systemd drop-in may replace it; the PostgreSQL example runs both backup and
-health services as `postgres` so local peer authentication and data access work.
+The package creates a generic `backmaster` system user. MongoDB connections
+normally use that identity. A source-specific systemd drop-in may replace it;
+the PostgreSQL example runs both backup and health services as `postgres` so
+local peer authentication and data access work.
 
 ## Prepare configuration directories
 
@@ -81,6 +96,7 @@ health services as `postgres` so local peer authentication and data access work.
 sudo install -d -m 0755 \
   /etc/backmaster/instances.d \
   /etc/backmaster/drivers/postgres \
+  /etc/backmaster/drivers/mongodb \
   /etc/backmaster/exporters/rclone \
   /etc/backmaster/exporters/azcopy
 sudo install -d -m 0750 -o root -g postgres /etc/backmaster/secrets
