@@ -36,9 +36,15 @@ HEALTHCHECK_MAX_AGE_SECONDS=129600
 WAL_RETENTION_DAYS=15
 ```
 
+These are all settings interpreted directly by the AzCopy exporter. AzCopy
+authentication variables such as `AZCOPY_AUTO_LOGIN_TYPE` are passed through
+to the command and are governed by the installed AzCopy version.
+
 <!-- markdownlint-disable MD013 -->
 | Setting | Default | Meaning |
 | --- | --- | --- |
+| `EXPORTER_CONFIG` | required | Readable exporter policy file selected by the instance |
+| `EXPORTER_SECRET_FILE` | empty | Optional protected file sourced after the policy file |
 | `AZCOPY_DESTINATION` | required | HTTPS Blob container URL plus an optional instance-specific prefix |
 | `AZCOPY_SAS_TOKEN` | empty | Optional SAS query string; keep it in the secret file |
 | `AZCOPY_LOG_LOCATION` | instance state | Absolute directory for AzCopy logs |
@@ -52,7 +58,9 @@ WAL_RETENTION_DAYS=15
 Use a destination prefix dedicated to one Backmaster instance. The exporter
 validates HTTPS URLs and URL-encodes every generated blob path. A SAS may be in
 `AZCOPY_DESTINATION` or `AZCOPY_SAS_TOKEN`, but not both. Keeping it in the
-secret file avoids mixing credentials into policy. See the
+secret file avoids mixing credentials into policy. The policy loads first and
+the secret file second, so secret values override policy or inherited values.
+See the
 [secrets guide](../guides/secrets.md) for loading precedence, filesystem
 permissions, validation, and rotation.
 

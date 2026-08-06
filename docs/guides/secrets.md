@@ -86,6 +86,34 @@ reading credentials but prevents the service from modifying them. Keep secret
 files outside package-managed example directories and exclude local deployment
 trees from version control and configuration-management logs.
 
+## PostgreSQL driver credentials
+
+For password authentication, prefer a PostgreSQL passfile over an environment
+password. Put only its protected path in the driver secret file:
+
+```bash
+PGPASSFILE=/etc/backmaster/secrets/production-postgres.pgpass
+```
+
+The passfile itself uses PostgreSQL's `host:port:database:user:password` format,
+must be readable by the service identity, and must not grant group or world
+access. For the packaged PostgreSQL service identity, install it separately
+from the group-readable environment file:
+
+```bash
+sudo install -m 0600 -o postgres -g postgres source.pgpass \
+  /etc/backmaster/secrets/production-postgres.pgpass
+```
+
+A TLS client configuration may instead or additionally reference
+`PGSSLCERT`, `PGSSLKEY`, and `PGSSLROOTCERT` from the driver secret file. Avoid
+`PGPASSWORD`: PostgreSQL discourages it because process environments may be
+observable.
+
+The [PostgreSQL driver reference](../drivers/postgresql.md#postgresql-client-environment)
+lists every supported libpq pass-through variable and explains which connection
+fields Backmaster sets explicitly.
+
 ## Exporter examples
 
 An rclone Azure account-key file may contain:

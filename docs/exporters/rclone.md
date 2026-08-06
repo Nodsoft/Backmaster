@@ -18,8 +18,15 @@ configuration are loaded consistently.
 
 ## Configuration
 
-An instance selects the exporter with `EXPORTER=rclone` and points
-`EXPORTER_CONFIG` at its policy file. A typical Azure policy file is:
+Select the exporter and its files in the instance configuration:
+
+```bash
+EXPORTER=rclone
+EXPORTER_CONFIG=/etc/backmaster/exporters/rclone/production-postgres.env
+EXPORTER_SECRET_FILE=/etc/backmaster/secrets/production-postgres-exporter.env
+```
+
+A typical Azure policy file is:
 
 ```bash
 RCLONE_DESTINATION=azure:backups/nsys-postgresql
@@ -27,21 +34,27 @@ RETENTION_DAYS=14
 MINIMUM_REDUNDANCY=2
 HEALTHCHECK_MAX_AGE_SECONDS=129600
 WAL_RETENTION_DAYS=15
-EXPORTER_SECRET_FILE=/etc/backmaster/secrets/production-postgres-exporter.env
 ```
+
+These are all settings interpreted directly by the rclone exporter. Variables
+named `RCLONE_CONFIG_<REMOTE>_*` are passed through to rclone and are governed
+by the installed rclone version.
 
 <!-- markdownlint-disable MD013 -->
 | Setting | Default | Meaning |
 | --- | --- | --- |
+| `EXPORTER_CONFIG` | required | Readable exporter policy file selected by the instance |
+| `EXPORTER_SECRET_FILE` | empty | Optional protected file sourced after the policy file |
 | `RCLONE_DESTINATION` | required | Remote, container/bucket, and root path |
 | `RETENTION_DAYS` | `14` | Days to retain completed backups; `unlimited` or `none` disables their cleanup |
 | `MINIMUM_REDUNDANCY` | `2` | Minimum count of newest committed backups protected from age-based cleanup |
 | `HEALTHCHECK_MAX_AGE_SECONDS` | `129600` | Maximum acceptable committed-backup age |
 | `WAL_RETENTION_DAYS` | `15` | Days to retain WAL; `unlimited` or `none` disables WAL cleanup |
-| `EXPORTER_SECRET_FILE` | empty | Optional protected file sourced after the policy file |
 <!-- markdownlint-enable MD013 -->
 
-Keep credentials in `EXPORTER_SECRET_FILE`, not in the instance or policy file.
+The exporter loads its policy first and `EXPORTER_SECRET_FILE` second, so secret
+values override policy or inherited values. Keep credentials in the secret
+file, not in the instance or policy file.
 The [secrets guide](../guides/secrets.md) documents loading precedence,
 filesystem permissions, validation, and rotation.
 For an rclone remote named `azure`, an account-key secret file can contain:

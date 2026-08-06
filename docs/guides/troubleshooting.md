@@ -63,7 +63,10 @@ sudo -u postgres pg_isready \
 ```
 
 Check that `PGPORT` points to the local member, socket permissions allow access,
-and PostgreSQL/Patroni is running.
+and PostgreSQL/Patroni is running. If the policy uses `PGHOSTADDR`, a service
+file, TLS, GSSAPI, or a passfile, reproduce those environment settings too; the
+[driver reference](../drivers/postgresql.md#postgresql-client-environment)
+lists every supported pass-through variable.
 
 ### `pg_basebackup` authentication or permission failure (physical)
 

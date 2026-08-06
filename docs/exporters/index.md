@@ -11,6 +11,11 @@ driver produced the payload.
 - [AzCopy](azcopy.md) targets Azure Blob Storage with Microsoft's native
   transfer utility and identity integrations.
 
+Each bundled exporter page is the canonical reference for that component's
+settings, defaults, authentication, remote layout, commands, retention, and
+operational constraints. Task-oriented guides link to those references rather
+than duplicating their option tables.
+
 ## Contract
 
 | Command | Contract |
