@@ -117,6 +117,12 @@ backup. A `.partial.*` directory indicates interrupted production and is not
 automatically resumed. Investigate the cause and remove it only after confirming
 that no Backmaster process owns it.
 
+Archive layouts need enough local staging capacity for the unbundled driver
+payload and the completed archive at the same time. Backmaster deletes the
+unbundled copy only after archive creation succeeds, and deletes the ready stage
+only after the exporter successfully publishes the manifest. Monitor free
+space, CPU time, and backup duration when increasing compression levels.
+
 ## Remote catalogue
 
 For both bundled exporters, only directories containing `manifest.json` count

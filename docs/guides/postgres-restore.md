@@ -53,6 +53,10 @@ rclone cat \
 Confirm `instance`, `driver`, `node`, `backup_name`, and `created_epoch` match the
 intended recovery.
 
+The optional `artifact` object describes whether the backup uses individual
+files or one archive. Older manifests without that object use the `files`
+layout.
+
 ## 2. Download and verify
 
 Use a new local directory with enough room for both compressed archives and the
@@ -66,8 +70,37 @@ rclone copy \
   "$restore_root"
 
 cd "$restore_root"
+```
+
+For a files-layout backup, verify immediately:
+
+```bash
 sudo -u postgres sha256sum --check checksums.sha256
 ```
+
+For an archive layout, download yields one `backup.*` file plus the manifest.
+Verify the archive against `.artifact.sha256`, extract it into the restore root
+using the format recorded in `.artifact.format`, then verify the payload
+checksums stored inside it:
+
+```bash
+archive="$(jq -r '.artifact.file' manifest.json)"
+printf '%s  %s\n' "$(jq -r '.artifact.sha256' manifest.json)" "$archive" | \
+  sha256sum --check -
+case "$(jq -r '.artifact.format' manifest.json)" in
+  zip) unzip backup.zip ;;
+  tar.gz) tar -xzf backup.tar.gz ;;
+  tar.xz) tar -xJf backup.tar.xz ;;
+  tar.zst) tar --zstd -xf backup.tar.zst ;;
+  *) echo "unsupported backup archive format" >&2; exit 1 ;;
+esac
+sudo -u postgres sha256sum --check checksums.sha256
+```
+
+Extract into a new, empty, mode-`0700` restore directory and do not bypass the
+checksum step. Archive mode optimizes whole-backup download and storage; use the
+default files layout when routinely downloading individual database dumps is
+more important.
 
 Stop if any checksum fails. Preserve the downloaded files for investigation and
 select another known-good backup.

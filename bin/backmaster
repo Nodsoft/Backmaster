@@ -55,6 +55,31 @@ load_instance() {
     BACKMASTER_STATE_DIRECTORY="${STAGING_ROOT%/}/${INSTANCE_NAME}"
     BACKUP_NAME_MODE="${BACKUP_NAME_MODE:-daily-time}"
     BACKUP_NAME_SUFFIX_MODE="${BACKUP_NAME_SUFFIX_MODE:-hostname}"
+    BACKUP_ARCHIVE_FORMAT="${BACKUP_ARCHIVE_FORMAT:-files}"
+    case "$BACKUP_ARCHIVE_FORMAT" in
+        files) BACKUP_ARCHIVE_COMPRESSION_LEVEL="${BACKUP_ARCHIVE_COMPRESSION_LEVEL:-0}" ;;
+        zip|tar.gz|tar.xz) BACKUP_ARCHIVE_COMPRESSION_LEVEL="${BACKUP_ARCHIVE_COMPRESSION_LEVEL:-6}" ;;
+        tar.zst) BACKUP_ARCHIVE_COMPRESSION_LEVEL="${BACKUP_ARCHIVE_COMPRESSION_LEVEL:-3}" ;;
+        *) die "invalid_backup_archive_format value=$BACKUP_ARCHIVE_FORMAT" ;;
+    esac
+    case "$BACKUP_ARCHIVE_FORMAT" in
+        files)
+            [[ "$BACKUP_ARCHIVE_COMPRESSION_LEVEL" == 0 ]] || \
+                die "archive_compression_level_requires_archive value=$BACKUP_ARCHIVE_COMPRESSION_LEVEL"
+            ;;
+        zip|tar.xz)
+            [[ "$BACKUP_ARCHIVE_COMPRESSION_LEVEL" =~ ^[0-9]$ ]] || \
+                die "invalid_archive_compression_level format=$BACKUP_ARCHIVE_FORMAT value=$BACKUP_ARCHIVE_COMPRESSION_LEVEL range=0-9"
+            ;;
+        tar.gz)
+            [[ "$BACKUP_ARCHIVE_COMPRESSION_LEVEL" =~ ^[1-9]$ ]] || \
+                die "invalid_archive_compression_level format=$BACKUP_ARCHIVE_FORMAT value=$BACKUP_ARCHIVE_COMPRESSION_LEVEL range=1-9"
+            ;;
+        tar.zst)
+            [[ "$BACKUP_ARCHIVE_COMPRESSION_LEVEL" =~ ^([1-9]|1[0-9])$ ]] || \
+                die "invalid_archive_compression_level format=$BACKUP_ARCHIVE_FORMAT value=$BACKUP_ARCHIVE_COMPRESSION_LEVEL range=1-19"
+            ;;
+    esac
     case "$BACKUP_NAME_MODE" in daily|daily-serial|daily-time) ;; *) die "invalid_backup_name_mode value=$BACKUP_NAME_MODE";; esac
     case "$BACKUP_NAME_SUFFIX_MODE" in
         none|hostname) ;;
@@ -64,6 +89,7 @@ load_instance() {
     export MAX_AGE_SECONDS CONSUL_LOCK_KEY CONSUL_LOCK_TIMEOUT STAGING_ROOT
     export BACKMASTER_STATE_DIRECTORY
     export DRIVER_EXEC EXPORTER_EXEC BACKUP_NAME_MODE BACKUP_NAME_SUFFIX_MODE
+    export BACKUP_ARCHIVE_FORMAT BACKUP_ARCHIVE_COMPRESSION_LEVEL
     export BACKUP_NAME_SUFFIX_VALUE INSTANCE_NAME NODE_NAME DRIVER EXPORTER
 }
 
@@ -73,6 +99,59 @@ require_core_commands() {
         command -v "$name" >/dev/null || die "missing_command command=$name"
     done
     [[ "$BACKUP_NAME_SUFFIX_MODE" != hostname ]] || command -v hostname >/dev/null || die "missing_command command=hostname"
+    case "$BACKUP_ARCHIVE_FORMAT" in
+        files) ;;
+        zip) command -v zip >/dev/null || die "missing_command command=zip" ;;
+        tar.gz)
+            command -v tar >/dev/null || die "missing_command command=tar"
+            command -v gzip >/dev/null || die "missing_command command=gzip"
+            ;;
+        tar.xz)
+            command -v tar >/dev/null || die "missing_command command=tar"
+            command -v xz >/dev/null || die "missing_command command=xz"
+            ;;
+        tar.zst)
+            command -v tar >/dev/null || die "missing_command command=tar"
+            command -v zstd >/dev/null || die "missing_command command=zstd"
+            ;;
+    esac
+}
+
+bundle_stage() {
+    local stage="$1" temporary digest
+    ARCHIVE_FILENAME=""
+    ARCHIVE_SHA256=""
+    [[ "$BACKUP_ARCHIVE_FORMAT" != files ]] || return 0
+    case "$BACKUP_ARCHIVE_FORMAT" in
+        zip) ARCHIVE_FILENAME=backup.zip ;;
+        tar.gz) ARCHIVE_FILENAME=backup.tar.gz ;;
+        tar.xz) ARCHIVE_FILENAME=backup.tar.xz ;;
+        tar.zst) ARCHIVE_FILENAME=backup.tar.zst ;;
+    esac
+    temporary="$stage/.backup.partial.${ARCHIVE_FILENAME#backup.}"
+    case "$BACKUP_ARCHIVE_FORMAT" in
+        zip)
+            (cd "$stage" && zip -q -r "-$BACKUP_ARCHIVE_COMPRESSION_LEVEL" \
+                "$temporary" payload checksums.sha256) || return 1
+            ;;
+        tar.gz)
+            (cd "$stage" && tar -cf - payload checksums.sha256) | \
+                gzip "-$BACKUP_ARCHIVE_COMPRESSION_LEVEL" -c >"$temporary" || return 1
+            ;;
+        tar.xz)
+            (cd "$stage" && tar -cf - payload checksums.sha256) | \
+                xz "-$BACKUP_ARCHIVE_COMPRESSION_LEVEL" -c >"$temporary" || return 1
+            ;;
+        tar.zst)
+            (cd "$stage" && tar -cf - payload checksums.sha256) | \
+                zstd -q "-$BACKUP_ARCHIVE_COMPRESSION_LEVEL" -c >"$temporary" || return 1
+            ;;
+    esac
+    [[ -s "$temporary" ]] || return 1
+    mv -- "$temporary" "$stage/$ARCHIVE_FILENAME" || return 1
+    digest="$(sha256sum "$stage/$ARCHIVE_FILENAME")" || return 1
+    ARCHIVE_SHA256="${digest%% *}"
+    rm -rf -- "$stage/payload" "$stage/checksums.sha256" || return 1
 }
 
 resolve_backup_name() {
@@ -144,10 +223,21 @@ prepare_stage() {
     fi
     if ! "$DRIVER_EXEC" prepare "$partial/payload" >&2; then rm -rf -- "$partial"; die "driver_prepare_failed"; fi
     (cd "$partial" && find payload -type f -print0 | sort -z | xargs -0 -r sha256sum > checksums.sha256)
+    if ! bundle_stage "$partial"; then
+        rm -rf -- "$partial"
+        die "archive_create_failed format=$BACKUP_ARCHIVE_FORMAT"
+    fi
     created="$(date +%s)"
     jq -n --arg name "$BACKUP_NAME" --arg instance "$INSTANCE_NAME" \
         --arg driver "$DRIVER" --arg node "$NODE_NAME" --argjson created "$created" \
-        '{schema:1,backup_name:$name,instance:$instance,driver:$driver,node:$node,created_epoch:$created}' \
+        --arg archive_format "$BACKUP_ARCHIVE_FORMAT" \
+        --arg archive_file "$ARCHIVE_FILENAME" \
+        --arg archive_sha256 "$ARCHIVE_SHA256" \
+        --argjson archive_level "$BACKUP_ARCHIVE_COMPRESSION_LEVEL" \
+        '{schema:2,backup_name:$name,instance:$instance,driver:$driver,node:$node,created_epoch:$created} +
+         if $archive_format == "files" then {artifact:{layout:"files"}}
+         else {artifact:{layout:"archive",format:$archive_format,file:$archive_file,compression_level:$archive_level,sha256:$archive_sha256}}
+         end' \
         >"$partial/manifest.json"
     ready="${parent}/${BACKUP_NAME}.ready"
     [[ ! -e "$ready" ]] || { rm -rf -- "$partial"; die "stage_already_exists path=$ready"; }

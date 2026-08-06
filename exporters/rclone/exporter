@@ -63,8 +63,22 @@ next_serial() {
 }
 
 publish() {
-    local stage="$1" name destination
-    [[ -r "$stage/manifest.json" && -r "$stage/checksums.sha256" ]] || die "invalid stage: $stage"
+    local stage="$1" name destination layout archive expected actual
+    [[ -r "$stage/manifest.json" ]] || die "invalid stage: $stage"
+    layout="$(jq -er '.artifact.layout // "files"' "$stage/manifest.json")" || die "invalid stage manifest: $stage"
+    case "$layout" in
+        files) [[ -r "$stage/checksums.sha256" ]] || die "invalid files stage: $stage" ;;
+        archive)
+            archive="$(jq -er '.artifact.file' "$stage/manifest.json")" || die "invalid archive manifest: $stage"
+            expected="$(jq -er '.artifact.sha256' "$stage/manifest.json")" || die "invalid archive manifest: $stage"
+            [[ "$archive" =~ ^backup\.(zip|tar\.(gz|xz|zst))$ && -r "$stage/$archive" ]] || \
+                die "invalid archive stage: $stage"
+            [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || die "invalid archive checksum: $stage"
+            actual="$(sha256sum "$stage/$archive")"; actual="${actual%% *}"
+            [[ "$actual" == "$expected" ]] || die "archive checksum mismatch: $stage/$archive"
+            ;;
+        *) die "unsupported artifact layout: $layout" ;;
+    esac
     name="$(jq -er '.backup_name' "$stage/manifest.json")"
     destination="${RCLONE_DESTINATION}/basebackups/${name}"
     rclone copy "$stage" "$destination" --exclude '/manifest.json'

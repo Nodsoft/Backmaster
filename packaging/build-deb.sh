@@ -96,7 +96,7 @@ printf 'u backmaster - "Backmaster backup orchestrator" /var/lib/backmaster -\n'
     >"$core_root/usr/lib/sysusers.d/backmaster.conf"
 sed -i "s|@BACKMASTER_VERSION@|${VERSION}|g" "$core_root/usr/bin/backmaster"
 write_control "$CORE_PACKAGE" \
-    "bash (>= 4.4), consul, coreutils, findutils, jq, systemd" \
+    "bash (>= 4.4), consul, coreutils, findutils, gzip, jq, systemd, tar, xz-utils, zip, zstd" \
     "modular fleet backup orchestrator core" \
     "Coordinates distributed scheduling, locking, naming, local staging, retention calls, and health reporting. Install driver and exporter packages for a usable flow." \
     "Breaks: $META_PACKAGE (<< $VERSION)

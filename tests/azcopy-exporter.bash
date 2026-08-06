@@ -138,6 +138,21 @@ grep '/payload/space%20name?sig=test' "$temporary/log" >/dev/null || {
     exit 1
 }
 
+mkdir -p "$temporary/archive-stage"
+printf 'bundled backup\n' >"$temporary/archive-stage/backup.tar.zst"
+archive_sha="$(sha256sum "$temporary/archive-stage/backup.tar.zst")"
+jq -n --arg sha "${archive_sha%% *}" \
+    '{schema:2,backup_name:"2026-08-03-001-axon",created_epoch:1784000000,
+      artifact:{layout:"archive",format:"tar.zst",file:"backup.tar.zst",compression_level:3,sha256:$sha}}' \
+    >"$temporary/archive-stage/manifest.json"
+run_exporter publish "$temporary/archive-stage" >/dev/null
+[[ -f "$temporary/remote/basebackups/2026-08-03-001-axon/backup.tar.zst" ]]
+printf 'corrupt\n' >>"$temporary/archive-stage/backup.tar.zst"
+if run_exporter publish "$temporary/archive-stage" >/dev/null 2>&1; then
+    echo "AzCopy accepted an archive checksum mismatch" >&2
+    exit 1
+fi
+
 printf 'wal\n' >"$temporary/wal"
 run_exporter put-file "$temporary/wal" wal/00000001 >/dev/null
 run_exporter get-file wal/00000001 "$temporary/restored-wal" >/dev/null

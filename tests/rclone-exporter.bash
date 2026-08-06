@@ -74,6 +74,21 @@ run_exporter publish "$TMP/stage"
 [[ "$(run_exporter latest-epoch)" == 1785683663 ]] || { echo "latest epoch mismatch" >&2; exit 1; }
 [[ "$(run_exporter next-serial 2026-08-02)" == 7 ]] || { echo "serial mismatch" >&2; exit 1; }
 
+mkdir -p "$TMP/archive-stage"
+printf 'bundled backup\n' >"$TMP/archive-stage/backup.zip"
+archive_sha="$(sha256sum "$TMP/archive-stage/backup.zip")"
+jq -n --arg sha "${archive_sha%% *}" \
+    '{schema:2,backup_name:"2026-08-03-001-axon",created_epoch:1784000000,
+      artifact:{layout:"archive",format:"zip",file:"backup.zip",compression_level:6,sha256:$sha}}' \
+    >"$TMP/archive-stage/manifest.json"
+run_exporter publish "$TMP/archive-stage"
+[[ -f "$TMP/remote/bucket/basebackups/2026-08-03-001-axon/backup.zip" ]]
+printf 'corrupt\n' >>"$TMP/archive-stage/backup.zip"
+if run_exporter publish "$TMP/archive-stage" >/dev/null 2>&1; then
+    echo "rclone accepted an archive checksum mismatch" >&2
+    exit 1
+fi
+
 run_exporter retain
 [[ -d "$TMP/remote/bucket/basebackups/2026-08-02-005-myelin" ]]
 [[ ! -e "$TMP/remote/bucket/basebackups/2026-07-20-004-axon" ]]

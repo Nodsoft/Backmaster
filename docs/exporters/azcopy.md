@@ -116,17 +116,18 @@ The remote layout matches the exporter contract:
 AZCOPY_DESTINATION/
 ├── basebackups/
 │   └── BACKUP_NAME/
-│       ├── payload/...
-│       ├── checksums.sha256
+│       ├── payload/... + checksums.sha256, or backup.ARCHIVE
 │       └── manifest.json
 └── objects/
     └── wal/...
 ```
 
-`publish` uploads every regular stage file to its exact destination blob. It
-skips `manifest.json` during that pass and uploads it separately, last. Only a
-directory containing that manifest is a committed catalogue entry. A retry
-overwrites an interrupted partial upload safely and recommits the manifest.
+`publish` uploads every regular files-layout object or the configured archive
+to its exact destination blob. It verifies an archive against the SHA-256 in
+the manifest, skips `manifest.json` during the artifact pass, and uploads it
+separately, last. Only a directory containing that manifest is a committed
+catalogue entry. A retry overwrites an interrupted partial upload safely and
+recommits the manifest.
 
 Catalogue operations use `azcopy list` to locate manifests, download only those
 small files, and read their embedded creation epoch and backup name. This makes

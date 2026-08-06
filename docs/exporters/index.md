@@ -18,14 +18,16 @@ than duplicating their option tables.
 
 ## Contract
 
+<!-- markdownlint-disable MD013 -->
 | Command | Contract |
 | --- | --- |
 | `latest-epoch` | Print newest committed manifest epoch, or exit 3 when empty |
 | `next-serial DATE` | Print the next positive serial for a UTC day |
-| `publish STAGE_DIR` | Durably publish payload, checksums, then manifest last |
+| `publish STAGE_DIR` | Durably publish files or the configured archive, then manifest last |
 | `retain` | Apply remote retention after a successful publish |
 | `connectivitycheck` | Authenticate and verify the destination |
 | `healthcheck` | Validate remote backup freshness |
+<!-- markdownlint-enable MD013 -->
 
 The optional `put-file SOURCE KEY` and `get-file KEY DESTINATION` verbs provide
 generic object transport for continuous recovery streams such as PostgreSQL
@@ -35,6 +37,12 @@ The manifest is the remote commit marker. `latest-epoch`, serial allocation,
 health checks, and retention must ignore payloads without a committed manifest.
 An exporter must return success from `publish` only after the manifest is
 durable. The core removes a ready stage only after that success.
+
+`publish` must accept both core stage layouts. A files stage contains
+`payload/`, `checksums.sha256`, and `manifest.json`. An archive stage contains
+the archive named by `.artifact.file` and `manifest.json`; its payload and
+checksums are inside the archive. Manifests without `.artifact` are legacy
+files-layout stages.
 
 See the separate [driver contract](../drivers/index.md) for source-side
 requirements.
