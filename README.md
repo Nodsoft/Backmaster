@@ -26,6 +26,7 @@ does not require changing the core.
 | Diagnose a failure | [Troubleshooting](docs/guides/troubleshooting.md) |
 | Write a driver | [Driver contract](docs/drivers/index.md) |
 | Write an exporter | [Exporter contract](docs/exporters/index.md) |
+| Understand the Shell-to-Go migration | [Migration architecture](docs/architecture/go-migration.md) |
 
 ## Five-minute overview
 
