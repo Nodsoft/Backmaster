@@ -1,0 +1,45 @@
+name: Build .deb (Backmaster)
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  deb:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute version
+        uses: dotnet/nbgv@f088059084cb5d872e9d1a994433ca6440c2bf72 # v0.4.2
+        id: nbgv
+
+      - name: Build Debian package
+        env:
+          VERSION: ${{ steps.nbgv.outputs.semver2 }}
+          OUT_DIR: dist
+          ARCH: all
+        run: ./packaging/build-deb.sh
+
+      - name: Inspect Debian package
+        run: |
+          set -euo pipefail
+          dpkg-deb --info dist/*.deb
+          dpkg-deb --contents dist/*.deb
+          package_root="$(mktemp -d)"
+          dpkg-deb --extract dist/*.deb "$package_root"
+          test "$("$package_root/usr/bin/backmaster" --version)" = \
+            "backmaster ${{ steps.nbgv.outputs.semver2 }}"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backmaster-deb
+          path: dist/*.deb
+          if-no-files-found: error
+          retention-days: 14

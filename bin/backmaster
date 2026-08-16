@@ -2,8 +2,9 @@
 set -Eeuo pipefail
 
 readonly CONFIG_ROOT="${BACKMASTER_CONFIG_ROOT:-/etc/backmaster}"
-readonly INSTALL_ROOT="${BACKMASTER_INSTALL_ROOT:-/opt/backmaster}"
+readonly INSTALL_ROOT="${BACKMASTER_INSTALL_ROOT:-/usr/lib/backmaster}"
 readonly SELF="$(readlink -f "$0")"
+readonly BACKMASTER_VERSION="@BACKMASTER_VERSION@"
 
 log() {
     printf '%s instance=%s node=%s %s\n' "$(date --iso-8601=seconds)" \
@@ -20,6 +21,7 @@ Usage:
   backmaster connectivity INSTANCE
   backmaster driver INSTANCE VERB [ARG...]
   backmaster exporter INSTANCE VERB [ARG...]
+  backmaster --version
 USAGE
 }
 
@@ -177,6 +179,7 @@ main() {
             load_instance "$instance"; shift 2
             if [[ "$command" == driver ]]; then exec "$DRIVER_EXEC" "$@"; else exec "$EXPORTER_EXEC" "$@"; fi
             ;;
+        --version) printf 'backmaster %s\n' "$BACKMASTER_VERSION" ;;
         -h|--help) usage ;;
         *) usage >&2; exit 64 ;;
     esac

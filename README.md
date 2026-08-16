@@ -71,9 +71,19 @@ deploy/{axon,myelin}/         staggered timer examples
 docs/                         contracts and recovery runbook
 ```
 
-Install under `/opt/backmaster`, configuration under `/etc/backmaster`, and the
-CLI under `/usr/local/bin/backmaster`. The PostgreSQL systemd drop-in runs the
+The Debian package installs runtime files under `/usr/lib/backmaster`,
+configuration under `/etc/backmaster`, and the CLI at `/usr/bin/backmaster`.
+The PostgreSQL systemd drop-in runs the
 flow as `postgres`; exporter secrets should be `0640 root:postgres`.
+
+```bash
+curl -fsSL https://packages.nodsoft.net/install.sh | sudo bash
+sudo apt install backmaster
+```
+
+Release and branch builds also publish a downloadable `.deb` workflow
+artifact. Build one locally with `packaging/build-deb.sh`; set `VERSION` and
+`ARCH` to override the detected values.
 
 ```bash
 sudo -u postgres backmaster connectivity nsys-postgres
