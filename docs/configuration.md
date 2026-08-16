@@ -74,17 +74,45 @@ Example: `/etc/backmaster/drivers/postgres/production-postgres.env`
 PGHOST=/var/run/postgresql
 PGPORT=5431
 PGUSER=postgres
+PG_BACKUP_MODE=physical
+PGDATABASE=postgres
 PG_COMPRESSION=client-gzip:level=6
 PG_CHECKPOINT=fast
+PG_LOGICAL_COMPRESSION=6
+PG_LOGICAL_GLOBALS_GZIP_LEVEL=6
+# PG_DATABASE_INCLUDE=$'app\nmatrix'
+# PG_DATABASE_EXCLUDE=$'scratch\ntest'
 ```
 
-| Setting | Meaning |
-| --- | --- |
-| `PGHOST` | Unix socket directory or host accepted by PostgreSQL clients |
-| `PGPORT` | Direct PostgreSQL member port, not a load-balanced write endpoint |
-| `PGUSER` | Role used by `pg_basebackup` |
-| `PG_COMPRESSION` | Value passed to `pg_basebackup --compress` |
-| `PG_CHECKPOINT` | `fast` or `spread`, passed to `pg_basebackup` |
+<!-- markdownlint-disable MD013 -->
+| Setting | Mode | Default | Meaning |
+| --- | --- | --- | --- |
+| `PGHOST` | both | required | Unix socket directory or PostgreSQL host |
+| `PGPORT` | both | required | PostgreSQL port |
+| `PGUSER` | both | required | Backup role |
+| `PG_BACKUP_MODE` | both | `physical` | `physical` or `logical` |
+| `PGDATABASE` | both | `postgres` | Maintenance database used by readiness and logical discovery |
+| `PG_COMPRESSION` | physical | `client-gzip:level=6` | `pg_basebackup --compress` value |
+| `PG_CHECKPOINT` | physical | `fast` | `fast` or `spread` |
+| `PG_LOGICAL_COMPRESSION` | logical | `6` | `pg_dump --compress` value |
+| `PG_LOGICAL_GLOBALS_GZIP_LEVEL` | logical | `6` | Compression level for `globals.sql.gz` |
+| `PG_DATABASE_INCLUDE` | logical | empty | Newline-delimited exact database names; empty means all |
+| `PG_DATABASE_EXCLUDE` | logical | empty | Newline-delimited exact database names to omit |
+<!-- markdownlint-enable MD013 -->
+
+Logical mode discovers every connectable, non-template database. If an include
+list is present, every named database must exist; a typo fails the backup rather
+than silently creating an incomplete set. Exclusions are applied after includes
+and therefore take precedence. If the filters select no databases, the backup
+fails. Database names are passed directly to PostgreSQL tools, while dump
+filenames are SHA-256-derived to prevent names from becoming filesystem paths.
+
+Use ANSI-C quoting for multiple exact names in the shell environment file:
+
+```bash
+PG_DATABASE_INCLUDE=$'backmaster\nmatrix\nsynapse'
+PG_DATABASE_EXCLUDE=$'scratch\ntest'
+```
 
 No storage credentials belong in the driver file.
 
@@ -106,11 +134,12 @@ WAL_RETENTION_DAYS=15
 | `RETENTION_DAYS` | `14` | Age after which base backups may be removed |
 | `MINIMUM_REDUNDANCY` | `2` | Newest completed base backups always preserved |
 | `HEALTHCHECK_MAX_AGE_SECONDS` | `129600` | Critical remote age |
-| `WAL_RETENTION_DAYS` | `15` | Age after which archived WAL may be removed |
+| `WAL_RETENTION_DAYS` | `15` | Archived WAL maximum age (physical only) |
 
-Base-backup retention removes an item only when it is both older than
+Backup retention removes an item only when it is both older than
 `RETENTION_DAYS` and outside the newest `MINIMUM_REDUNDANCY` items. Choose WAL
-retention long enough to cover every retained base backup you may restore.
+retention long enough to cover every retained physical backup you may restore.
+Logical instances do not produce WAL objects.
 
 Do not point unrelated instances at the same destination root. Backmaster owns
 the `basebackups/` and `objects/` namespaces below it.
@@ -160,3 +189,5 @@ RCLONE_DESTINATION/
 
 `manifest.json` is uploaded last. Its presence defines a completed backup;
 payload left without a manifest is incomplete and ignored by the catalogue.
+Physical payloads contain `pg_basebackup` tar archives. Logical payloads contain
+`globals.sql.gz`, `databases.json`, and custom-format dumps under `databases/`.

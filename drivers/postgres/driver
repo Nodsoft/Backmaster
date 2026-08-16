@@ -16,30 +16,124 @@ load_config() {
     fi
     set +a
     : "${PGHOST:?PGHOST is required}"; : "${PGPORT:?PGPORT is required}"; : "${PGUSER:?PGUSER is required}"
+    PG_BACKUP_MODE="${PG_BACKUP_MODE:-physical}"
+    PGDATABASE="${PGDATABASE:-postgres}"
     PG_COMPRESSION="${PG_COMPRESSION:-client-gzip:level=6}"
     PG_CHECKPOINT="${PG_CHECKPOINT:-fast}"
+    PG_LOGICAL_COMPRESSION="${PG_LOGICAL_COMPRESSION:-6}"
+    PG_LOGICAL_GLOBALS_GZIP_LEVEL="${PG_LOGICAL_GLOBALS_GZIP_LEVEL:-6}"
+    PG_DATABASE_INCLUDE="${PG_DATABASE_INCLUDE:-}"
+    PG_DATABASE_EXCLUDE="${PG_DATABASE_EXCLUDE:-}"
+    [[ "$PG_BACKUP_MODE" == physical || "$PG_BACKUP_MODE" == logical ]] || \
+        die "PG_BACKUP_MODE must be physical or logical"
 }
 
-prepare() {
+postgres_ready() {
+    pg_isready -q -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" || \
+        die "local PostgreSQL is unavailable"
+}
+
+prepare_physical() {
     local destination="$1"
-    [[ -d "$destination" ]] || die "staging payload does not exist: $destination"
-    [[ -z "$(find "$destination" -mindepth 1 -print -quit)" ]] || die "staging payload is not empty"
-    pg_isready -q -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" || die "local PostgreSQL is unavailable"
     pg_basebackup --host="$PGHOST" --port="$PGPORT" --username="$PGUSER" \
         --pgdata="$destination" --format=tar --wal-method=stream \
         --compress="$PG_COMPRESSION" --checkpoint="$PG_CHECKPOINT" \
         --manifest-checksums=SHA256 --label="$BACKUP_NAME"
 }
 
-connectivitycheck() {
-    command -v pg_basebackup >/dev/null || die "pg_basebackup is unavailable"
-    pg_isready -q -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" || die "local PostgreSQL is unavailable"
+database_is_listed() {
+    local database="$1" list="$2" item
+    while IFS= read -r item || [[ -n "$item" ]]; do
+        [[ -n "$item" && "$item" == "$database" ]] && return 0
+    done <<<"$list"
+    return 1
 }
 
-healthcheck() { connectivitycheck; echo "OK: local PostgreSQL can produce a base backup"; }
+validate_includes() {
+    local available="$1" requested
+    [[ -n "$PG_DATABASE_INCLUDE" ]] || return 0
+    while IFS= read -r requested || [[ -n "$requested" ]]; do
+        [[ -n "$requested" ]] || continue
+        database_is_listed "$requested" "$available" || \
+            die "included database does not exist or cannot be dumped: $requested"
+    done <<<"$PG_DATABASE_INCLUDE"
+}
+
+prepare_logical() {
+    local destination="$1" database_output database digest dump_file index temporary count=0
+    database_output="$(psql --no-psqlrc --tuples-only --no-align \
+        --host="$PGHOST" --port="$PGPORT" --username="$PGUSER" \
+        --dbname="$PGDATABASE" --set=ON_ERROR_STOP=1 \
+        --command="SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY datname")" || \
+        die "could not list PostgreSQL databases"
+    validate_includes "$database_output"
+
+    mkdir -p "$destination/databases"
+    index="$destination/databases.json"
+    printf '{"format":"backmaster-postgres-logical-v1","databases":[]}\n' >"$index"
+    while IFS= read -r database || [[ -n "$database" ]]; do
+        [[ -n "$database" ]] || continue
+        if [[ -n "$PG_DATABASE_INCLUDE" ]] && \
+            ! database_is_listed "$database" "$PG_DATABASE_INCLUDE"; then
+            continue
+        fi
+        if database_is_listed "$database" "$PG_DATABASE_EXCLUDE"; then
+            continue
+        fi
+
+        digest="$(printf '%s' "$database" | sha256sum)"
+        dump_file="${digest%% *}.dump"
+        pg_dump --host="$PGHOST" --port="$PGPORT" --username="$PGUSER" \
+            --dbname="$database" --format=custom \
+            --compress="$PG_LOGICAL_COMPRESSION" \
+            --file="$destination/databases/$dump_file"
+        temporary="${index}.tmp"
+        jq --arg database "$database" --arg file "databases/$dump_file" \
+            '.databases += [{database: $database, file: $file}]' \
+            "$index" >"$temporary"
+        mv -- "$temporary" "$index"
+        count=$((count + 1))
+    done <<<"$database_output"
+    ((count > 0)) || die "database filters selected no databases"
+
+    pg_dumpall --host="$PGHOST" --port="$PGPORT" --username="$PGUSER" \
+        --database="$PGDATABASE" --globals-only | \
+        gzip "-$PG_LOGICAL_GLOBALS_GZIP_LEVEL" -c >"$destination/globals.sql.gz"
+}
+
+prepare() {
+    local destination="$1"
+    [[ -d "$destination" ]] || die "staging payload does not exist: $destination"
+    [[ -z "$(find "$destination" -mindepth 1 -print -quit)" ]] || die "staging payload is not empty"
+    postgres_ready
+    case "$PG_BACKUP_MODE" in
+        physical) prepare_physical "$destination" ;;
+        logical) prepare_logical "$destination" ;;
+    esac
+}
+
+connectivitycheck() {
+    command -v pg_isready >/dev/null || die "pg_isready is unavailable"
+    case "$PG_BACKUP_MODE" in
+        physical) command -v pg_basebackup >/dev/null || die "pg_basebackup is unavailable" ;;
+        logical)
+            command -v psql >/dev/null || die "psql is unavailable"
+            command -v pg_dump >/dev/null || die "pg_dump is unavailable"
+            command -v pg_dumpall >/dev/null || die "pg_dumpall is unavailable"
+            command -v jq >/dev/null || die "jq is unavailable"
+            ;;
+    esac
+    postgres_ready
+}
+
+healthcheck() {
+    connectivitycheck
+    echo "OK: local PostgreSQL can produce a $PG_BACKUP_MODE backup"
+}
 
 wal_archive() {
     local wal_path="$1" temporary
+    [[ "$PG_BACKUP_MODE" == physical ]] || die "WAL archival requires PG_BACKUP_MODE=physical"
     : "${EXPORTER_EXEC:?EXPORTER_EXEC is required}"
     mkdir -p "${STAGING_ROOT}/${INSTANCE_NAME}"
     temporary="$(mktemp "${STAGING_ROOT}/${INSTANCE_NAME}/.wal.XXXXXX.gz")"
@@ -52,6 +146,7 @@ wal_archive() {
 
 wal_restore() {
     local wal_name="$1" destination="$2" temporary
+    [[ "$PG_BACKUP_MODE" == physical ]] || die "WAL restore requires PG_BACKUP_MODE=physical"
     : "${EXPORTER_EXEC:?EXPORTER_EXEC is required}"
     mkdir -p "${STAGING_ROOT}/${INSTANCE_NAME}"
     temporary="$(mktemp "${STAGING_ROOT}/${INSTANCE_NAME}/.wal-restore.XXXXXX.gz")"

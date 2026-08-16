@@ -138,7 +138,7 @@ cp -a "$ROOT/deploy/." "$driver_root/usr/share/doc/$DRIVER_PACKAGE/examples/depl
 write_control "$DRIVER_PACKAGE" \
     "$CORE_PACKAGE (= $VERSION), bash (>= 4.4), gzip, postgresql-client" \
     "PostgreSQL driver for Backmaster" \
-    "Produces compressed physical PostgreSQL base backups and transports continuous WAL through a configured Backmaster exporter." \
+    "Produces physical PostgreSQL base backups with continuous WAL or filtered logical database dumps through a configured Backmaster exporter." \
     "Breaks: $META_PACKAGE (<< $VERSION)
 Replaces: $META_PACKAGE (<< $VERSION)"
 
