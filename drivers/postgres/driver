@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+die() {
+    echo "postgres driver: $*" >&2
+    exit 1
+}
+
+load_config() {
+    : "${DRIVER_CONFIG:?DRIVER_CONFIG is required}"
+    [[ -r "$DRIVER_CONFIG" ]] || die "cannot read $DRIVER_CONFIG"
+
+    set -a
+    # Driver files are root-managed configuration, not user input.
+    # shellcheck disable=SC1090
+    source "$DRIVER_CONFIG"
+    if [[ -n "${DRIVER_SECRET_FILE:-}" ]]; then
+        [[ -r "$DRIVER_SECRET_FILE" ]] || die "cannot read $DRIVER_SECRET_FILE"
+        # shellcheck disable=SC1090
+        source "$DRIVER_SECRET_FILE"
+    fi
+    set +a
+
+    : "${AZURE_DESTINATION:?AZURE_DESTINATION is required}"
+    : "${BARMAN_SERVER_NAME:?BARMAN_SERVER_NAME is required}"
+    : "${PGHOST:?PGHOST is required}"
+    : "${PGPORT:?PGPORT is required}"
+    : "${PGUSER:?PGUSER is required}"
+
+    BACKUP_JOBS="${BACKUP_JOBS:-2}"
+    MIN_CHUNK_SIZE="${MIN_CHUNK_SIZE:-104857600}"
+    RETENTION_POLICY="${RETENTION_POLICY:-RECOVERY WINDOW OF 14 DAYS}"
+    MINIMUM_REDUNDANCY="${MINIMUM_REDUNDANCY:-2}"
+}
+
+provider_args() {
+    printf '%s\n' --cloud-provider azure-blob-storage
+    if [[ -n "${AZURE_CREDENTIAL_MODE:-}" ]]; then
+        printf '%s\n' --azure-credential "$AZURE_CREDENTIAL_MODE"
+    fi
+}
+
+catalogue() {
+    local -a args
+    mapfile -t args < <(provider_args)
+    barman-cloud-backup-list \
+        "${args[@]}" --format json \
+        "$AZURE_DESTINATION" "$BARMAN_SERVER_NAME"
+}
+
+latest_epoch() {
+    local latest
+    latest="$(catalogue | jq -r '
+        [ .[] | select((.status // "") == "DONE") | .end_time ]
+        | map(select(. != null)) | max // empty
+    ')"
+    [[ -n "$latest" ]] || exit 3
+    date --date="$latest" +%s
+}
+
+backup() {
+    local -a args
+    mapfile -t args < <(provider_args)
+    pg_isready -q -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" || \
+        die "local PostgreSQL is unavailable"
+
+    barman-cloud-backup \
+        "${args[@]}" \
+        --gzip \
+        --jobs "$BACKUP_JOBS" \
+        --min-chunk-size "$MIN_CHUNK_SIZE" \
+        --host "$PGHOST" \
+        --port "$PGPORT" \
+        --user "$PGUSER" \
+        --name "${NODE_NAME}-$(date --utc +%Y%m%dT%H%M%SZ)" \
+        "$AZURE_DESTINATION" "$BARMAN_SERVER_NAME"
+}
+
+retain() {
+    local -a args
+    mapfile -t args < <(provider_args)
+    barman-cloud-backup-delete \
+        "${args[@]}" \
+        --retention-policy "$RETENTION_POLICY" \
+        --minimum-redundancy "$MINIMUM_REDUNDANCY" \
+        "$AZURE_DESTINATION" "$BARMAN_SERVER_NAME"
+}
+
+connectivitycheck() {
+    local -a args
+    mapfile -t args < <(provider_args)
+    barman-cloud-backup-list \
+        "${args[@]}" --test \
+        "$AZURE_DESTINATION" "$BARMAN_SERVER_NAME"
+}
+
+healthcheck() {
+    local latest
+    local age
+    latest="$(latest_epoch)" || { echo "CRITICAL: no completed base backup"; exit 2; }
+    age=$(( $(date +%s) - latest ))
+    if (( age < 0 || age > ${HEALTHCHECK_MAX_AGE_SECONDS:-129600} )); then
+        echo "CRITICAL: latest PostgreSQL base backup is ${age}s old"
+        exit 2
+    fi
+    echo "OK: latest PostgreSQL base backup is ${age}s old"
+}
+
+wal_archive() {
+    local wal_path="$1"
+    local -a args
+    mapfile -t args < <(provider_args)
+    exec barman-cloud-wal-archive \
+        "${args[@]}" --gzip \
+        "$AZURE_DESTINATION" "$BARMAN_SERVER_NAME" "$wal_path"
+}
+
+wal_restore() {
+    local wal_name="$1"
+    local destination="$2"
+    local -a args
+    mapfile -t args < <(provider_args)
+    exec barman-cloud-wal-restore \
+        "${args[@]}" \
+        "$AZURE_DESTINATION" "$BARMAN_SERVER_NAME" \
+        "$wal_name" "$destination"
+}
+
+main() {
+    load_config
+    case "${1:-}" in
+        latest-epoch) latest_epoch ;;
+        backup) backup ;;
+        retain) retain ;;
+        connectivitycheck) connectivitycheck ;;
+        healthcheck) healthcheck ;;
+        wal-archive) [[ $# -eq 2 ]] || exit 64; wal_archive "$2" ;;
+        wal-restore) [[ $# -eq 3 ]] || exit 64; wal_restore "$2" "$3" ;;
+        *) die "unsupported command: ${1:-none}" ;;
+    esac
+}
+
+main "$@"
+

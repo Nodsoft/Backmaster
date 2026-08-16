@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic Backmaster health check for %i
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+Unit=backmaster-health@%i.service
+
+[Install]
+WantedBy=timers.target
+

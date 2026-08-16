@@ -1,0 +1,25 @@
+[Unit]
+Description=Backmaster backup flow %i
+Documentation=https://github.com/Nodsoft/Backmaster
+Wants=network-online.target consul.service
+After=network-online.target consul.service patroni.service
+
+[Service]
+Type=oneshot
+User=postgres
+Group=postgres
+Environment=BACKMASTER_CONFIG_ROOT=/etc/backmaster
+Environment=BACKMASTER_INSTALL_ROOT=/opt/backmaster
+ExecStart=/usr/local/bin/backmaster run %i
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=12h
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/etc/backmaster /opt/backmaster
+ReadWritePaths=/var/tmp /run
+RestrictSUIDSGID=true
+

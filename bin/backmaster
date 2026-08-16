@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly CONFIG_ROOT="${BACKMASTER_CONFIG_ROOT:-/etc/backmaster}"
+readonly INSTALL_ROOT="${BACKMASTER_INSTALL_ROOT:-/opt/backmaster}"
+readonly SELF="$(readlink -f "$0")"
+
+log() {
+    printf '%s instance=%s node=%s %s\n' \
+        "$(date --iso-8601=seconds)" \
+        "${INSTANCE_NAME:-unknown}" \
+        "${NODE_NAME:-unknown}" \
+        "$*"
+}
+
+die() {
+    log "level=error message=$*" >&2
+    exit 1
+}
+
+usage() {
+    cat <<'USAGE'
+Usage:
+  backmaster run INSTANCE [--force]
+  backmaster health INSTANCE
+  backmaster connectivity INSTANCE
+  backmaster driver INSTANCE VERB [ARG...]
+USAGE
+}
+
+validate_name() {
+    [[ "$1" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "invalid_name value=$1"
+}
+
+load_instance() {
+    local requested="$1"
+    local config="${CONFIG_ROOT}/instances.d/${requested}.env"
+
+    validate_name "$requested"
+    [[ -r "$config" ]] || die "missing_instance_config path=$config"
+
+    set -a
+    # Instance files are root-managed configuration, not user input.
+    # shellcheck disable=SC1090
+    source "$config"
+    set +a
+
+    : "${INSTANCE_NAME:?INSTANCE_NAME is required}"
+    : "${NODE_NAME:?NODE_NAME is required}"
+    : "${DRIVER:?DRIVER is required}"
+    [[ "$INSTANCE_NAME" == "$requested" ]] || die "instance_name_mismatch"
+    validate_name "$DRIVER"
+
+    DRIVER_EXEC="${INSTALL_ROOT}/drivers/${DRIVER}/driver"
+    [[ -x "$DRIVER_EXEC" ]] || die "missing_driver path=$DRIVER_EXEC"
+
+    MAX_AGE_SECONDS="${MAX_AGE_SECONDS:-82800}"
+    CONSUL_LOCK_KEY="${CONSUL_LOCK_KEY:-service/backmaster/${INSTANCE_NAME}}"
+    CONSUL_LOCK_TIMEOUT="${CONSUL_LOCK_TIMEOUT:-30s}"
+    export MAX_AGE_SECONDS CONSUL_LOCK_KEY CONSUL_LOCK_TIMEOUT DRIVER_EXEC
+}
+
+require_core_commands() {
+    local name
+    for name in consul date; do
+        command -v "$name" >/dev/null || die "missing_command command=$name"
+    done
+}
+
+is_fresh() {
+    local latest
+    local status
+    local age
+
+    set +e
+    latest="$($DRIVER_EXEC latest-epoch)"
+    status=$?
+    set -e
+
+    if (( status == 3 )); then
+        log "level=info message=no_completed_backup"
+        return 1
+    fi
+    (( status == 0 )) || die "driver_latest_failed status=$status"
+    [[ "$latest" =~ ^[0-9]+$ ]] || die "driver_returned_invalid_epoch"
+
+    age=$(( $(date +%s) - latest ))
+    log "level=info latest_backup_epoch=$latest age_seconds=$age"
+    (( age >= 0 && age < MAX_AGE_SECONDS ))
+}
+
+run_locked() {
+    if [[ "${FORCE_BACKUP:-0}" != "1" ]] && is_fresh; then
+        log "level=info result=skipped reason=fresh_backup_exists"
+        return 0
+    fi
+
+    log "level=info action=backup_start driver=$DRIVER"
+    "$DRIVER_EXEC" backup
+    log "level=info action=backup_complete driver=$DRIVER"
+
+    "$DRIVER_EXEC" retain
+    log "level=info action=retention_complete driver=$DRIVER"
+}
+
+run_instance() {
+    local instance="$1"
+    local option="${2:-}"
+    load_instance "$instance"
+    require_core_commands
+
+    case "$option" in
+        --force) FORCE_BACKUP=1; export FORCE_BACKUP ;;
+        --locked) run_locked; return ;;
+        "") ;;
+        *) die "unknown_argument argument=$option" ;;
+    esac
+
+    log "level=info action=lock_acquire key=$CONSUL_LOCK_KEY"
+    exec consul lock \
+        -child-exit-code \
+        -shell=false \
+        -timeout="$CONSUL_LOCK_TIMEOUT" \
+        -name="backmaster-${INSTANCE_NAME}-${NODE_NAME}" \
+        "$CONSUL_LOCK_KEY" \
+        "$SELF" run "$INSTANCE_NAME" --locked
+}
+
+main() {
+    local command="${1:-}"
+    local instance="${2:-}"
+
+    case "$command" in
+        run)
+            [[ -n "$instance" ]] || { usage; exit 64; }
+            run_instance "$instance" "${3:-}"
+            ;;
+        health|connectivity)
+            [[ -n "$instance" ]] || { usage; exit 64; }
+            load_instance "$instance"
+            "$DRIVER_EXEC" "${command}check"
+            ;;
+        driver)
+            [[ -n "$instance" && -n "${3:-}" ]] || { usage; exit 64; }
+            load_instance "$instance"
+            shift 2
+            exec "$DRIVER_EXEC" "$@"
+            ;;
+        -h|--help)
+            usage
+            ;;
+        *)
+            usage >&2
+            exit 64
+            ;;
+    esac
+}
+
+main "$@"
+
