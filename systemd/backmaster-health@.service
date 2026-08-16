@@ -4,8 +4,8 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-User=postgres
-Group=postgres
+User=backmaster
+Group=backmaster
 Environment=BACKMASTER_CONFIG_ROOT=/etc/backmaster
 Environment=BACKMASTER_INSTALL_ROOT=/opt/backmaster
 ExecStart=/usr/local/bin/backmaster health %i

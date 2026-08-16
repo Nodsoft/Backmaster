@@ -76,8 +76,12 @@ provider.
 ## Installation sketch
 
 Install the project under `/opt/backmaster`, link `bin/backmaster` into
-`/usr/local/bin`, and install the systemd units. Copy the instance and driver
-configuration into `/etc/backmaster`; secrets must be `0640 root:postgres`.
+`/usr/local/bin`, and install the systemd units. Create an unprivileged
+`backmaster` service account for the generic default. Each driver can ship an
+instance-specific systemd drop-in selecting a narrower service identity; the
+PostgreSQL example runs as `postgres`. Copy the instance and driver
+configuration into `/etc/backmaster`; PostgreSQL secrets must be
+`0640 root:postgres`.
 
 ```bash
 sudo -u postgres backmaster connectivity nsys-postgres
@@ -105,4 +109,3 @@ needed.
 
 See [driver development](docs/drivers.md) for the exact lifecycle and failure
 semantics.
-

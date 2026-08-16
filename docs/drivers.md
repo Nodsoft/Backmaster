@@ -51,6 +51,11 @@ Drivers own:
 - recovery-material retention;
 - restore tooling and documentation.
 
+Drivers that require a service-owned identity should ship instance-specific
+systemd drop-ins. Do not bake a database or mail user into the shared unit:
+PostgreSQL can run as `postgres`, MongoDB as a purpose-made backup identity,
+and Maildir backup as an identity with narrowly scoped read access.
+
 ## Example future drivers
 
 | Driver | Likely consistency mechanism | Notes |
@@ -61,4 +66,3 @@ Drivers own:
 
 Do not force every driver into one archive implementation. The shared contract
 is lifecycle and observability, not a universal file format.
-
