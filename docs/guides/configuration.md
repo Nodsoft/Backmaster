@@ -135,18 +135,26 @@ HEALTHCHECK_MAX_AGE_SECONDS=129600
 WAL_RETENTION_DAYS=15
 ```
 
+<!-- markdownlint-disable MD013 -->
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `RCLONE_DESTINATION` | required | `remote:path` root owned by this instance |
-| `RETENTION_DAYS` | `14` | Age after which base backups may be removed |
-| `MINIMUM_REDUNDANCY` | `2` | Newest completed base backups always preserved |
+| `RETENTION_DAYS` | `14` | Retention days; `unlimited` or `none` disables base-backup cleanup |
+| `MINIMUM_REDUNDANCY` | `2` | Minimum newest committed-backup count protected from cleanup |
 | `HEALTHCHECK_MAX_AGE_SECONDS` | `129600` | Critical remote age |
-| `WAL_RETENTION_DAYS` | `15` | Archived WAL maximum age (physical only) |
+| `WAL_RETENTION_DAYS` | `15` | WAL retention days; `unlimited` or `none` disables WAL cleanup |
+<!-- markdownlint-enable MD013 -->
 
 Backup retention removes an item only when it is both older than
 `RETENTION_DAYS` and outside the newest `MINIMUM_REDUNDANCY` items. Choose WAL
 retention long enough to cover every retained physical backup you may restore.
 Logical instances do not produce WAL objects.
+
+`MINIMUM_REDUNDANCY` counts committed Backmaster backups in this destination;
+it does not configure storage replicas. Set it to `0` to remove the count guard.
+Set `RETENTION_DAYS=unlimited` and/or `WAL_RETENTION_DAYS=unlimited` to disable
+the corresponding cleanup. The alias `none` is also accepted. Numeric `0`
+means a zero-day threshold, not unlimited.
 
 Do not point unrelated instances at the same destination root. Backmaster owns
 the `basebackups/` and `objects/` namespaces below it.

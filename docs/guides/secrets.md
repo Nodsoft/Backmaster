@@ -150,4 +150,3 @@ Do not print the file or use `set -x` while troubleshooting. Report variable
 names, file metadata, and command status only. If a secret is exposed in logs,
 shell history, Git, or a support bundle, rotate it rather than only deleting the
 visible copy.
-

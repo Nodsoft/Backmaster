@@ -34,10 +34,10 @@ EXPORTER_SECRET_FILE=/etc/backmaster/secrets/production-postgres-exporter.env
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `RCLONE_DESTINATION` | required | Remote, container/bucket, and root path |
-| `RETENTION_DAYS` | `14` | Age after which eligible completed backups are removed |
-| `MINIMUM_REDUNDANCY` | `2` | Newest completed backups always preserved |
+| `RETENTION_DAYS` | `14` | Days to retain completed backups; `unlimited` or `none` disables their cleanup |
+| `MINIMUM_REDUNDANCY` | `2` | Minimum count of newest committed backups protected from age-based cleanup |
 | `HEALTHCHECK_MAX_AGE_SECONDS` | `129600` | Maximum acceptable committed-backup age |
-| `WAL_RETENTION_DAYS` | `15` | Age after which objects below `objects/wal` are removed |
+| `WAL_RETENTION_DAYS` | `15` | Days to retain WAL; `unlimited` or `none` disables WAL cleanup |
 | `EXPORTER_SECRET_FILE` | empty | Optional protected file sourced after the policy file |
 <!-- markdownlint-enable MD013 -->
 
@@ -120,9 +120,28 @@ sudo -u postgres backmaster exporter production-postgres latest-epoch
 ## Retention
 
 After a successful publication, `retain` orders committed manifests from newest
-to oldest. It always keeps `MINIMUM_REDUNDANCY` completed backups, then purges
-additional entries older than `RETENTION_DAYS`. It separately deletes objects
-below `objects/wal` older than `WAL_RETENTION_DAYS`.
+to oldest. A backup is removed only if it is both older than `RETENTION_DAYS`
+and outside the newest `MINIMUM_REDUNDANCY` committed backups.
+
+`MINIMUM_REDUNDANCY` is a protected backup count, not a replica count or a
+storage-redundancy setting. It counts committed manifests in this instance's
+destination, regardless of whether the driver produced physical or logical
+backups. For example, with `RETENTION_DAYS=14` and `MINIMUM_REDUNDANCY=2`, the
+newest two committed backups survive even when both are older than 14 days;
+older backups survive until they cross 14 days. Setting it to `0` disables this
+count guard and allows every age-expired base backup to be removed. It does not
+protect WAL objects.
+
+Set either retention clock independently to `unlimited` (or the alias `none`)
+to disable its cleanup:
+
+```bash
+RETENTION_DAYS=unlimited
+WAL_RETENTION_DAYS=unlimited
+```
+
+When base-backup retention is unlimited, `MINIMUM_REDUNDANCY` has no effect.
+Numeric `0` means a zero-day age threshold; it does not mean unlimited.
 
 Choose WAL retention long enough to cover every retained physical base backup
 that may be used for point-in-time recovery. Logical-only flows do not create

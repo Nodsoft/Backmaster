@@ -116,4 +116,22 @@ grep 'REMOVE .*objects/wal.*--include-before=' "$temporary/log" >/dev/null || {
     exit 1
 }
 
+sed -i 's/^RETENTION_DAYS=1$/RETENTION_DAYS=none/' \
+    "$temporary/config.env"
+sed -i 's/^WAL_RETENTION_DAYS=15$/WAL_RETENTION_DAYS=unlimited/' \
+    "$temporary/config.env"
+: >"$temporary/log"
+run_exporter retain >/dev/null
+[[ ! -s "$temporary/log" ]] || {
+    echo "unlimited retention still removed Azure data" >&2
+    exit 1
+}
+
+sed -i 's/^RETENTION_DAYS=none$/RETENTION_DAYS=invalid/' \
+    "$temporary/config.env"
+if run_exporter retain >/dev/null 2>&1; then
+    echo "invalid retention was accepted" >&2
+    exit 1
+fi
+
 echo "AzCopy exporter tests passed"
