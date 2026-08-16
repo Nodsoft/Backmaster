@@ -8,6 +8,8 @@ storage or credentials.
 
 - [PostgreSQL](postgresql.md) supports physical base backups with WAL and
   filtered logical dumps.
+- [MongoDB](mongodb.md) supports filtered, database-granular `mongodump`
+  archives or collection-file directories.
 
 Each bundled driver page is the canonical reference for that component's
 settings, defaults, accepted values, credentials, output, dependencies, and

@@ -21,7 +21,8 @@ fi
 
 readonly MAINTAINER="Nodsoft Systems <packages@nodsoft.net>"
 readonly CORE_PACKAGE="backmaster-core"
-readonly DRIVER_PACKAGE="backmaster-driver-postgres"
+readonly POSTGRES_DRIVER_PACKAGE="backmaster-driver-postgres"
+readonly MONGODB_DRIVER_PACKAGE="backmaster-driver-mongodb"
 readonly RCLONE_EXPORTER_PACKAGE="backmaster-exporter-rclone"
 readonly AZCOPY_EXPORTER_PACKAGE="backmaster-exporter-azcopy"
 readonly META_PACKAGE="backmaster"
@@ -127,30 +128,61 @@ EOF
 chmod 0755 "$core_root/DEBIAN/postrm"
 
 # PostgreSQL driver: source-specific executable, configuration, and runbook.
-driver_root="$(package_root "$DRIVER_PACKAGE")"
+driver_root="$(package_root "$POSTGRES_DRIVER_PACKAGE")"
 install -d -m 0755 \
     "$driver_root/DEBIAN" \
     "$driver_root/usr/lib/backmaster/drivers/postgres" \
-    "$driver_root/usr/share/doc/$DRIVER_PACKAGE/drivers" \
-    "$driver_root/usr/share/doc/$DRIVER_PACKAGE/guides" \
-    "$driver_root/usr/share/doc/$DRIVER_PACKAGE/examples/config/drivers" \
-    "$driver_root/usr/share/doc/$DRIVER_PACKAGE/examples/config/instances" \
-    "$driver_root/usr/share/doc/$DRIVER_PACKAGE/examples/deploy"
+    "$driver_root/usr/share/doc/$POSTGRES_DRIVER_PACKAGE/drivers" \
+    "$driver_root/usr/share/doc/$POSTGRES_DRIVER_PACKAGE/guides" \
+    "$driver_root/usr/share/doc/$POSTGRES_DRIVER_PACKAGE/examples/config/drivers" \
+    "$driver_root/usr/share/doc/$POSTGRES_DRIVER_PACKAGE/examples/config/instances" \
+    "$driver_root/usr/share/doc/$POSTGRES_DRIVER_PACKAGE/examples/deploy"
 install -m 0755 "$ROOT/drivers/postgres/driver" \
     "$driver_root/usr/lib/backmaster/drivers/postgres/driver"
 install -m 0644 "$ROOT/docs/guides/postgres-restore.md" \
-    "$driver_root/usr/share/doc/$DRIVER_PACKAGE/guides/postgres-restore.md"
+    "$driver_root/usr/share/doc/$POSTGRES_DRIVER_PACKAGE/guides/postgres-restore.md"
 install -m 0644 "$ROOT/docs/drivers/postgresql.md" \
-    "$driver_root/usr/share/doc/$DRIVER_PACKAGE/drivers/postgresql.md"
-cp -a "$ROOT/config/drivers/." \
-    "$driver_root/usr/share/doc/$DRIVER_PACKAGE/examples/config/drivers/"
-cp -a "$ROOT/config/instances/." \
-    "$driver_root/usr/share/doc/$DRIVER_PACKAGE/examples/config/instances/"
-cp -a "$ROOT/deploy/." "$driver_root/usr/share/doc/$DRIVER_PACKAGE/examples/deploy/"
-write_control "$DRIVER_PACKAGE" \
+    "$driver_root/usr/share/doc/$POSTGRES_DRIVER_PACKAGE/drivers/postgresql.md"
+install -m 0644 \
+    "$ROOT/config/drivers/postgres.env.example" \
+    "$ROOT/config/drivers/patroni-postgres.yaml.example" \
+    "$driver_root/usr/share/doc/$POSTGRES_DRIVER_PACKAGE/examples/config/drivers/"
+install -m 0644 "$ROOT/config/instances/nsys-postgres.env.example" \
+    "$driver_root/usr/share/doc/$POSTGRES_DRIVER_PACKAGE/examples/config/instances/"
+cp -a "$ROOT/deploy/." \
+    "$driver_root/usr/share/doc/$POSTGRES_DRIVER_PACKAGE/examples/deploy/"
+write_control "$POSTGRES_DRIVER_PACKAGE" \
     "$CORE_PACKAGE (= $VERSION), bash (>= 4.4), gzip, postgresql-client" \
     "PostgreSQL driver for Backmaster" \
     "Produces physical PostgreSQL base backups with continuous WAL or filtered logical database dumps through a configured Backmaster exporter." \
+    "Breaks: $META_PACKAGE (<< $VERSION)
+Replaces: $META_PACKAGE (<< $VERSION)"
+
+# MongoDB driver: database-granular logical dumps and restore documentation.
+mongodb_driver_root="$(package_root "$MONGODB_DRIVER_PACKAGE")"
+install -d -m 0755 \
+    "$mongodb_driver_root/DEBIAN" \
+    "$mongodb_driver_root/usr/lib/backmaster/drivers/mongodb" \
+    "$mongodb_driver_root/usr/share/doc/$MONGODB_DRIVER_PACKAGE/drivers" \
+    "$mongodb_driver_root/usr/share/doc/$MONGODB_DRIVER_PACKAGE/guides" \
+    "$mongodb_driver_root/usr/share/doc/$MONGODB_DRIVER_PACKAGE/examples/config/drivers" \
+    "$mongodb_driver_root/usr/share/doc/$MONGODB_DRIVER_PACKAGE/examples/config/instances"
+install -m 0755 "$ROOT/drivers/mongodb/driver" \
+    "$mongodb_driver_root/usr/lib/backmaster/drivers/mongodb/driver"
+install -m 0644 "$ROOT/docs/drivers/mongodb.md" \
+    "$mongodb_driver_root/usr/share/doc/$MONGODB_DRIVER_PACKAGE/drivers/mongodb.md"
+install -m 0644 "$ROOT/docs/guides/mongodb-restore.md" \
+    "$mongodb_driver_root/usr/share/doc/$MONGODB_DRIVER_PACKAGE/guides/mongodb-restore.md"
+install -m 0644 \
+    "$ROOT/config/drivers/mongodb.env.example" \
+    "$ROOT/config/drivers/mongodb.secrets.env.example" \
+    "$mongodb_driver_root/usr/share/doc/$MONGODB_DRIVER_PACKAGE/examples/config/drivers/"
+install -m 0644 "$ROOT/config/instances/nsys-mongodb.env.example" \
+    "$mongodb_driver_root/usr/share/doc/$MONGODB_DRIVER_PACKAGE/examples/config/instances/"
+write_control "$MONGODB_DRIVER_PACKAGE" \
+    "$CORE_PACKAGE (= $VERSION), bash (>= 4.4), jq, mongodb-database-tools, mongodb-mongosh" \
+    "MongoDB driver for Backmaster" \
+    "Discovers authorized MongoDB databases and produces filtered, independently restorable mongodump archives or collection-file directories." \
     "Breaks: $META_PACKAGE (<< $VERSION)
 Replaces: $META_PACKAGE (<< $VERSION)"
 
@@ -199,12 +231,13 @@ write_control "$AZCOPY_EXPORTER_PACKAGE" \
 meta_root="$(package_root "$META_PACKAGE")"
 install -d -m 0755 "$meta_root/DEBIAN"
 write_control "$META_PACKAGE" \
-    "$CORE_PACKAGE (= $VERSION), $DRIVER_PACKAGE (= $VERSION), $RCLONE_EXPORTER_PACKAGE (= $VERSION)" \
+    "$CORE_PACKAGE (= $VERSION), $POSTGRES_DRIVER_PACKAGE (= $VERSION), $RCLONE_EXPORTER_PACKAGE (= $VERSION)" \
     "complete Backmaster backup system" \
     "Convenience metapackage installing the Backmaster core, PostgreSQL driver, and rclone exporter."
 
 build_package "$CORE_PACKAGE"
-build_package "$DRIVER_PACKAGE"
+build_package "$POSTGRES_DRIVER_PACKAGE"
+build_package "$MONGODB_DRIVER_PACKAGE"
 build_package "$RCLONE_EXPORTER_PACKAGE"
 build_package "$AZCOPY_EXPORTER_PACKAGE"
 build_package "$META_PACKAGE"
