@@ -19,6 +19,7 @@ jobs:
       - run: bash -n bin/* drivers/*/driver exporters/*/exporter packaging/*.sh tests/*.bash
       - run: bash tests/naming.bash
       - run: bash tests/staging.bash
+      - run: bash tests/archive-formats.bash
       - run: bash tests/postgres-driver.bash
       - run: bash tests/rclone-exporter.bash
       - run: bash tests/azcopy-exporter.bash

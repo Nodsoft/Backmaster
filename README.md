@@ -90,7 +90,8 @@ flowchart TD
 ```
 
 The driver can only write to `payload/`. The core adds checksums and a JSON
-manifest, then atomically promotes the stage to `*.ready`. The exporter uploads
+manifest and can optionally bundle the checksummed payload as ZIP, gzip, xz, or
+Zstandard, then atomically promotes the stage to `*.ready`. The exporter uploads
 the manifest last, making it the remote commit marker. If export fails, the
 ready stage stays local and is resumed before any new backup is created.
 

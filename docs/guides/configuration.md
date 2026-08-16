@@ -29,6 +29,8 @@ EXPORTER_CONFIG=/etc/backmaster/exporters/rclone/production-postgres.env
 EXPORTER_SECRET_FILE=/etc/backmaster/secrets/production-postgres-exporter.env
 
 STAGING_ROOT=/var/lib/backmaster
+BACKUP_ARCHIVE_FORMAT=files
+# BACKUP_ARCHIVE_COMPRESSION_LEVEL=6
 MAX_AGE_SECONDS=82800
 CONSUL_LOCK_KEY=service/backmaster/production-postgres
 CONSUL_LOCK_TIMEOUT=30s
@@ -38,6 +40,7 @@ BACKUP_NAME_SUFFIX_MODE=custom
 BACKUP_NAME_SUFFIX_VALUE=axon
 ```
 
+<!-- markdownlint-disable MD013 -->
 | Setting | Required | Meaning |
 | --- | --- | --- |
 | `INSTANCE_NAME` | yes | Must exactly match the requested instance filename |
@@ -49,13 +52,42 @@ BACKUP_NAME_SUFFIX_VALUE=axon
 | `EXPORTER_CONFIG` | by exporter | Exporter policy file |
 | `EXPORTER_SECRET_FILE` | no | Optional exporter credential file |
 | `STAGING_ROOT` | no | Stage parent; default `/var/lib/backmaster` |
+| `BACKUP_ARCHIVE_FORMAT` | no | Remote artifact layout; `files` (default), `zip`, `tar.gz`, `tar.xz`, or `tar.zst` |
+| `BACKUP_ARCHIVE_COMPRESSION_LEVEL` | no | Compression effort; format-specific default and range below |
 | `MAX_AGE_SECONDS` | no | Freshness gate for `run`; default `82800` (23 h) |
 | `CONSUL_LOCK_KEY` | no | Shared lock; default `service/backmaster/INSTANCE` |
 | `CONSUL_LOCK_TIMEOUT` | no | Lock wait; default `30s` |
+<!-- markdownlint-enable MD013 -->
 
 Use the same `INSTANCE_NAME`, `CONSUL_LOCK_KEY`, exporter destination, and
 `MAX_AGE_SECONDS` on all fallback-capable nodes. Give each node a distinct
 `NODE_NAME`. `NODE_NAME` is metadata; it is independent from a name suffix.
+
+## Archive and compression policy
+
+The default `BACKUP_ARCHIVE_FORMAT=files` publishes the driver payload as
+individual objects. Archive modes first checksum the complete driver payload,
+then place `payload/` and `checksums.sha256` into one downloadable archive. The
+exporter publishes that archive and uploads `manifest.json` separately and
+last, preserving the remote commit-marker guarantee.
+
+<!-- markdownlint-disable MD013 -->
+| Format | Output | Level range | Default | Trade-off |
+| --- | --- | ---: | ---: | --- |
+| `files` | Individual payload objects | fixed `0` | `0` | Selective downloads; no extra archive pass |
+| `zip` | `backup.zip` | `0`–`9` | `6` | Widely supported and easy to browse |
+| `tar.gz` | `backup.tar.gz` | `1`–`9` | `6` | Broad Unix compatibility and moderate CPU use |
+| `tar.xz` | `backup.tar.xz` | `0`–`9` | `6` | Smaller output at higher CPU and memory cost |
+| `tar.zst` | `backup.tar.zst` | `1`–`19` | `3` | Fast compression/decompression with strong ratios |
+<!-- markdownlint-enable MD013 -->
+
+Higher levels generally reduce transfer and storage size at the cost of more
+CPU, memory, and staging time. Compression gains depend on driver output:
+PostgreSQL custom dumps and compressed physical tar files may already be highly
+compressed. Archive creation temporarily requires space for both the payload
+and completed archive. The manifest records the selected format, filename,
+compression level, and archive SHA-256 so restore tooling does not need to
+infer them from policy files.
 
 ## Naming
 
@@ -197,8 +229,7 @@ and retention.
 EXPORTER_DESTINATION/
 ├── basebackups/
 │   └── BACKUP_NAME/
-│       ├── payload/
-│       ├── checksums.sha256
+│       ├── payload/ + checksums.sha256 (files layout), or backup.ARCHIVE
 │       └── manifest.json
 └── objects/
     └── wal/
@@ -206,6 +237,8 @@ EXPORTER_DESTINATION/
 
 `manifest.json` is uploaded last. Its presence defines a completed backup;
 payload left without a manifest is incomplete and ignored by the catalogue.
+For archive layouts, the archive contains both `payload/` and
+`checksums.sha256`; the manifest remains outside it as the commit marker.
 Physical payloads contain `pg_basebackup` tar archives. Logical payloads contain
 `globals.sql.gz`, `databases.json`, and configurable custom (`.dump`) or plain
 SQL (`.sql`) dumps under `databases/`. Filenames can be SHA-256 hashes or plain

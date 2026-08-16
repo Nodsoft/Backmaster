@@ -28,6 +28,12 @@ done
 [[ "$(field backmaster-exporter-rclone Depends)" == *"backmaster-core (= $version)"* ]]
 [[ "$(field backmaster-exporter-azcopy Depends)" == *"backmaster-core (= $version)"* ]]
 [[ "$(field backmaster-exporter-azcopy Depends)" == *"azcopy"* ]]
+for dependency in gzip tar xz-utils zip zstd; do
+    [[ "$(field backmaster-core Depends)" == *"$dependency"* ]] || {
+        echo "backmaster-core is missing archive dependency: $dependency" >&2
+        exit 1
+    }
+done
 [[ "$(field backmaster-core Replaces)" == "backmaster (<< $version)" ]]
 [[ "$(field backmaster-driver-postgres Replaces)" == "backmaster (<< $version)" ]]
 [[ "$(field backmaster-exporter-rclone Replaces)" == "backmaster (<< $version)" ]]

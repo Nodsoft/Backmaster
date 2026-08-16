@@ -22,8 +22,9 @@ option table.
 2. The core resolves the backup name and creates a private partial stage under
    `STAGING_ROOT/INSTANCE`.
 3. The driver runs `prepare PAYLOAD_DIR`. It may only produce local files.
-4. The core adds `checksums.sha256` and `manifest.json`, then atomically renames
-   the directory to `*.ready`.
+4. The core adds `checksums.sha256`, optionally bundles the payload and
+   checksums, adds `manifest.json`, then atomically renames the directory to
+   `*.ready`.
 5. The configured exporter publishes the ready stage and commits it remotely.
 6. Only after a successful publish does the core remove local staging and run
    exporter retention.

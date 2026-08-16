@@ -87,17 +87,18 @@ The exporter owns two namespaces below `RCLONE_DESTINATION`:
 
 ```text
 basebackups/BACKUP_NAME/
-  payload/...
-  checksums.sha256
+  payload/... + checksums.sha256, or backup.ARCHIVE
   manifest.json
 objects/
   wal/...
 ```
 
-`publish` copies the payload and checksums first, then uploads `manifest.json`
-last. Only a directory containing a valid manifest is a completed catalogue
-entry. An interrupted upload may leave remote payload files, but freshness,
-serial allocation, and retention ignore them until publication commits.
+`publish` copies the files-layout payload and checksums, or the single archive,
+then uploads `manifest.json` last. It verifies an archive against the SHA-256 in
+the manifest before transfer. Only a directory containing a valid manifest is a
+completed catalogue entry. An interrupted upload may leave remote artifacts,
+but freshness, serial allocation, and retention ignore them until publication
+commits.
 
 Use a destination root dedicated to one Backmaster instance. Sharing a root
 between unrelated instances mixes their catalogue, naming, health, and retention
