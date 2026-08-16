@@ -11,7 +11,8 @@ digits, and hyphens.
 
 Configuration files are sourced as shell environment files. Use simple
 `KEY=value` assignments, quote values containing spaces, and do not place
-untrusted content in them.
+untrusted content in them. Credential file loading, permissions, and rotation
+are covered in [Secrets and credentials](secrets.md).
 
 ## Instance file
 

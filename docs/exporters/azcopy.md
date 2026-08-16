@@ -50,7 +50,9 @@ WAL_RETENTION_DAYS=15
 Use a destination prefix dedicated to one Backmaster instance. The exporter
 validates HTTPS URLs and URL-encodes every generated blob path. A SAS may be in
 `AZCOPY_DESTINATION` or `AZCOPY_SAS_TOKEN`, but not both. Keeping it in the
-secret file avoids mixing credentials into policy.
+secret file avoids mixing credentials into policy. See the
+[secrets guide](../guides/secrets.md) for loading precedence, filesystem
+permissions, validation, and rotation.
 
 ## Authentication
 

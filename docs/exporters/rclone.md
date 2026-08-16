@@ -42,6 +42,8 @@ EXPORTER_SECRET_FILE=/etc/backmaster/secrets/production-postgres-exporter.env
 <!-- markdownlint-enable MD013 -->
 
 Keep credentials in `EXPORTER_SECRET_FILE`, not in the instance or policy file.
+The [secrets guide](../guides/secrets.md) documents loading precedence,
+filesystem permissions, validation, and rotation.
 For an rclone remote named `azure`, an account-key secret file can contain:
 
 ```bash
