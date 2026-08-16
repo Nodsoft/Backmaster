@@ -20,12 +20,18 @@ load_config() {
     PGDATABASE="${PGDATABASE:-postgres}"
     PG_COMPRESSION="${PG_COMPRESSION:-client-gzip:level=6}"
     PG_CHECKPOINT="${PG_CHECKPOINT:-fast}"
+    PG_LOGICAL_FORMAT="${PG_LOGICAL_FORMAT:-custom}"
+    PG_LOGICAL_FILE_NAMING="${PG_LOGICAL_FILE_NAMING:-sha256}"
     PG_LOGICAL_COMPRESSION="${PG_LOGICAL_COMPRESSION:-6}"
     PG_LOGICAL_GLOBALS_GZIP_LEVEL="${PG_LOGICAL_GLOBALS_GZIP_LEVEL:-6}"
     PG_DATABASE_INCLUDE="${PG_DATABASE_INCLUDE:-}"
     PG_DATABASE_EXCLUDE="${PG_DATABASE_EXCLUDE:-}"
     [[ "$PG_BACKUP_MODE" == physical || "$PG_BACKUP_MODE" == logical ]] || \
         die "PG_BACKUP_MODE must be physical or logical"
+    [[ "$PG_LOGICAL_FORMAT" == custom || "$PG_LOGICAL_FORMAT" == plain ]] || \
+        die "PG_LOGICAL_FORMAT must be custom or plain"
+    [[ "$PG_LOGICAL_FILE_NAMING" == sha256 || "$PG_LOGICAL_FILE_NAMING" == plain ]] || \
+        die "PG_LOGICAL_FILE_NAMING must be sha256 or plain"
 }
 
 postgres_ready() {
@@ -60,7 +66,18 @@ validate_includes() {
 }
 
 prepare_logical() {
-    local destination="$1" database_output database digest dump_file index temporary count=0
+    local destination="$1" database_output database digest dump_file extension index temporary count=0
+    local -a dump_format_arguments
+    case "$PG_LOGICAL_FORMAT" in
+        custom)
+            extension=dump
+            dump_format_arguments=(--format=custom --compress="$PG_LOGICAL_COMPRESSION")
+            ;;
+        plain)
+            extension=sql
+            dump_format_arguments=(--format=plain)
+            ;;
+    esac
     database_output="$(psql --no-psqlrc --tuples-only --no-align \
         --host="$PGHOST" --port="$PGPORT" --username="$PGUSER" \
         --dbname="$PGDATABASE" --set=ON_ERROR_STOP=1 \
@@ -70,7 +87,8 @@ prepare_logical() {
 
     mkdir -p "$destination/databases"
     index="$destination/databases.json"
-    printf '{"format":"backmaster-postgres-logical-v1","databases":[]}\n' >"$index"
+    printf '{"format":"backmaster-postgres-logical-v1","dump_format":"%s","file_naming":"%s","databases":[]}\n' \
+        "$PG_LOGICAL_FORMAT" "$PG_LOGICAL_FILE_NAMING" >"$index"
     while IFS= read -r database || [[ -n "$database" ]]; do
         [[ -n "$database" ]] || continue
         if [[ -n "$PG_DATABASE_INCLUDE" ]] && \
@@ -81,11 +99,20 @@ prepare_logical() {
             continue
         fi
 
-        digest="$(printf '%s' "$database" | sha256sum)"
-        dump_file="${digest%% *}.dump"
+        case "$PG_LOGICAL_FILE_NAMING" in
+            sha256)
+                digest="$(printf '%s' "$database" | sha256sum)"
+                dump_file="${digest%% *}.${extension}"
+                ;;
+            plain)
+                [[ "$database" != *'/'* && "$database" != *$'\n'* && \
+                    "$database" != *$'\r'* ]] || \
+                    die "database name cannot be used as a plain filename: $database"
+                dump_file="${database}.${extension}"
+                ;;
+        esac
         pg_dump --host="$PGHOST" --port="$PGPORT" --username="$PGUSER" \
-            --dbname="$database" --format=custom \
-            --compress="$PG_LOGICAL_COMPRESSION" \
+            --dbname="$database" "${dump_format_arguments[@]}" \
             --file="$destination/databases/$dump_file"
         temporary="${index}.tmp"
         jq --arg database "$database" --arg file "databases/$dump_file" \

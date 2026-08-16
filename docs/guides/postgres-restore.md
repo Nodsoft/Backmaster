@@ -10,7 +10,7 @@ it self-contained to the end of the backup. Separately archived WAL supports
 point-in-time recovery beyond that point.
 
 A logical payload instead contains `globals.sql.gz`, `databases.json`, and one
-custom-format dump per selected database. It supports selective restore and
+custom or plain SQL dump per selected database. It supports selective restore and
 major-version migration subject to PostgreSQL compatibility, but not PITR or a
 byte-for-byte Patroni member rebuild.
 
@@ -227,7 +227,8 @@ psql --set=ON_ERROR_STOP=1 --file="$restore_root/globals.sql" postgres
 ```
 
 For each desired entry in `databases.json`, create an empty target database with
-the intended owner, then restore its mapped custom-format dump. For example:
+the intended owner, then restore its mapped dump. Read `dump_format` from the
+index rather than relying only on the extension:
 
 ```bash
 database=backmaster
@@ -236,8 +237,21 @@ dump_file="$(jq -r --arg database "$database" \
   "$restore_root/payload/databases.json")"
 test -n "$dump_file" && test "$dump_file" != null
 createdb --template=template0 "$database"
-pg_restore --exit-on-error --dbname="$database" \
-  "$restore_root/payload/$dump_file"
+case "$(jq -r '.dump_format // "custom"' \
+  "$restore_root/payload/databases.json")" in
+  custom)
+    pg_restore --exit-on-error --dbname="$database" \
+      "$restore_root/payload/$dump_file"
+    ;;
+  plain)
+    psql --set=ON_ERROR_STOP=1 --dbname="$database" \
+      --file="$restore_root/payload/$dump_file"
+    ;;
+  *)
+    echo "unsupported logical dump format" >&2
+    exit 1
+    ;;
+esac
 ```
 
 Use `--clean --if-exists` only when an intentional replacement workflow calls

@@ -6,7 +6,7 @@ The PostgreSQL driver has two selectable modes:
 | Mode | Produces | Best for | Does not provide |
 | --- | --- | --- | --- |
 | `physical` | Compressed `pg_basebackup` plus optional continuous WAL | Cluster/member rebuild and PITR | Per-database selection |
-| `logical` | Globals plus one custom-format `pg_dump` per database | Selective backup, migration, object/database restore | PITR or a Patroni member image |
+| `logical` | Globals plus one configurable `pg_dump` per database | Selective backup, migration, object/database restore | PITR or a Patroni member image |
 <!-- markdownlint-enable MD013 -->
 
 `physical` remains the default. Use separate Backmaster instances and remote
@@ -36,6 +36,8 @@ These are all settings interpreted directly by the PostgreSQL driver:
 | `PG_BACKUP_MODE` | both | `physical` | Exactly `physical` or `logical` |
 | `PG_COMPRESSION` | physical | `client-gzip:level=6` | `pg_basebackup --compress`; accepted syntax depends on the installed client version |
 | `PG_CHECKPOINT` | physical | `fast` | `pg_basebackup --checkpoint`; PostgreSQL accepts `fast` or `spread` |
+| `PG_LOGICAL_FORMAT` | logical | `custom` | `custom` writes restorable `.dump` archives; `plain` writes directly readable `.sql` scripts |
+| `PG_LOGICAL_FILE_NAMING` | logical | `sha256` | `sha256` hides database names in filenames; `plain` writes the exact database name before the extension |
 | `PG_LOGICAL_COMPRESSION` | logical | `6` | `pg_dump --compress` for every custom-format database archive; accepted syntax depends on the installed client version |
 | `PG_LOGICAL_GLOBALS_GZIP_LEVEL` | logical | `6` | `gzip` level for `globals.sql.gz`; use `1` through `9` |
 | `PG_DATABASE_INCLUDE` | logical | empty | Exact, newline-delimited database names; empty selects every discovered database |
@@ -46,8 +48,10 @@ Backmaster deliberately passes compression values to the installed PostgreSQL
 tools instead of maintaining a second version-specific parser. An invalid or
 unsupported value therefore fails in `pg_basebackup` or `pg_dump`. The package
 uses tar format, streamed WAL, SHA-256 manifests, and a backup label in physical
-mode; those choices are fixed and have no Backmaster setting. Logical archives
-are always custom format and are produced sequentially.
+mode; those choices are fixed and have no Backmaster setting. Logical dumps
+are produced sequentially. `PG_LOGICAL_COMPRESSION` applies only to `custom`;
+plain SQL output is intentionally uncompressed so a downloaded `.sql` file can
+be inspected and passed directly to `psql`.
 
 The core also supplies internal lifecycle context: `BACKUP_NAME` becomes the
 physical backup label, while `INSTANCE_NAME`, `STAGING_ROOT`, and
@@ -114,6 +118,30 @@ PG_DATABASE_EXCLUDE=$'scratch\ntest'
 
 Leave both values empty to dump every connectable, non-template database.
 
+### Logical output names and formats
+
+Naming and dump format are independent. The defaults retain Backmaster's
+original behavior:
+
+```bash
+PG_LOGICAL_FILE_NAMING=sha256
+PG_LOGICAL_FORMAT=custom
+```
+
+For human-readable, directly downloadable SQL files, use:
+
+```bash
+PG_LOGICAL_FILE_NAMING=plain
+PG_LOGICAL_FORMAT=plain
+```
+
+That produces paths such as `databases/backmaster.sql`. Plain naming preserves
+the PostgreSQL database name exactly, including spaces and Unicode. For path
+safety, the driver rejects a selected name containing `/`, carriage return, or
+newline instead of modifying it or creating nested paths. Use `sha256` naming
+if such a name must be backed up. In all modes, `databases.json` is the
+authoritative database-to-file mapping and records both selected policies.
+
 ### Commands and dependencies
 
 Invoke driver verbs through `backmaster driver INSTANCE ...`; direct execution
@@ -150,15 +178,16 @@ payload/
 ├── globals.sql.gz
 ├── databases.json
 └── databases/
-    └── SHA256_OF_DATABASE_NAME.dump
+    └── SHA256.dump | DATABASE_NAME.dump | SHA256.sql | DATABASE_NAME.sql
 ```
 
 `globals.sql.gz` is the plain SQL output of `pg_dumpall --globals-only`.
-`databases.json` records the original database name and relative custom-archive
-path for every selected database. The SHA-256 filenames prevent database names
-from becoming filesystem paths; do not infer names from those files without
-the index. The core adds `checksums.sha256` and `manifest.json` outside
-`payload/` after the driver succeeds.
+`databases.json` records the logical dump format, naming policy, original
+database name, and relative path for every selected database. Custom archives
+use `.dump` and restore through `pg_restore`; plain dumps use `.sql` and restore
+through `psql`. SHA-256 naming prevents database names from appearing in object
+paths. The core adds `checksums.sha256` and `manifest.json` outside `payload/`
+after the driver succeeds.
 
 ## 1. Prepare PostgreSQL
 
@@ -210,6 +239,8 @@ option reference is above; a logical configuration might use:
 
 ```bash
 PG_BACKUP_MODE=logical
+PG_LOGICAL_FORMAT=plain
+PG_LOGICAL_FILE_NAMING=plain
 PGDATABASE=postgres
 PG_DATABASE_INCLUDE=$'backmaster\nmatrix\nsynapse'
 PG_DATABASE_EXCLUDE=$'scratch\ntest'

@@ -84,6 +84,8 @@ PG_BACKUP_MODE=physical
 PGDATABASE=postgres
 PG_COMPRESSION=client-gzip:level=6
 PG_CHECKPOINT=fast
+PG_LOGICAL_FORMAT=custom
+PG_LOGICAL_FILE_NAMING=sha256
 PG_LOGICAL_COMPRESSION=6
 PG_LOGICAL_GLOBALS_GZIP_LEVEL=6
 # PG_DATABASE_INCLUDE=$'app\nmatrix'
@@ -95,7 +97,9 @@ list is present, every named database must exist; a typo fails the backup rather
 than silently creating an incomplete set. Exclusions are applied after includes
 and therefore take precedence. If the filters select no databases, the backup
 fails. Database names are passed directly to PostgreSQL tools, while dump
-filenames are SHA-256-derived to prevent names from becoming filesystem paths.
+filenames use the configured SHA-256 or plain naming policy. Plain names and
+plain SQL output make individual database downloads directly recognizable;
+SHA-256/custom remain the compatibility defaults.
 
 Use ANSI-C quoting for multiple exact names in the shell environment file:
 
@@ -203,4 +207,6 @@ EXPORTER_DESTINATION/
 `manifest.json` is uploaded last. Its presence defines a completed backup;
 payload left without a manifest is incomplete and ignored by the catalogue.
 Physical payloads contain `pg_basebackup` tar archives. Logical payloads contain
-`globals.sql.gz`, `databases.json`, and custom-format dumps under `databases/`.
+`globals.sql.gz`, `databases.json`, and configurable custom (`.dump`) or plain
+SQL (`.sql`) dumps under `databases/`. Filenames can be SHA-256 hashes or plain
+database names; see the [PostgreSQL driver reference](../drivers/postgresql.md).
