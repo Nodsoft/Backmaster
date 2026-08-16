@@ -47,6 +47,26 @@ The core guarantees that `latest-epoch`, `backup`, and `retain` execute while
 holding the instance's distributed lock. A driver must not implement its own
 fleet priority rules.
 
+## Backup naming
+
+Naming is configured per instance and resolved while the distributed lock is
+held. `BACKUP_NAME_MODE` accepts:
+
+| Mode | Example |
+| --- | --- |
+| `daily` | `2026-08-02` |
+| `daily-serial` | `2026-08-02-001` |
+| `daily-time` | `2026-08-02T151423Z` |
+
+All dates and times are UTC. `BACKUP_NAME_SUFFIX_MODE` accepts `none`,
+`hostname`, or `custom`. The hostname mode appends the runner's short hostname;
+custom mode appends `BACKUP_NAME_SUFFIX_VALUE`. For example, a daily serial
+backup with custom suffix `axon` is named `2026-08-02-001-axon`.
+
+`daily-time` with a hostname suffix is the default. Drivers supporting
+`daily-serial` implement the repository-aware `next-serial DATE` command so
+serials remain monotonic across all runners sharing the catalogue.
+
 ## Layout
 
 ```text
