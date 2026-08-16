@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+die() { echo "rclone exporter: $*" >&2; exit 1; }
+
+load_config() {
+    : "${EXPORTER_CONFIG:?EXPORTER_CONFIG is required}"
+    [[ -r "$EXPORTER_CONFIG" ]] || die "cannot read $EXPORTER_CONFIG"
+    set -a
+    # shellcheck disable=SC1090
+    source "$EXPORTER_CONFIG"
+    if [[ -n "${EXPORTER_SECRET_FILE:-}" ]]; then
+        [[ -r "$EXPORTER_SECRET_FILE" ]] || die "cannot read $EXPORTER_SECRET_FILE"
+        # shellcheck disable=SC1090
+        source "$EXPORTER_SECRET_FILE"
+    fi
+    set +a
+    : "${RCLONE_DESTINATION:?RCLONE_DESTINATION is required}"
+    RETENTION_DAYS="${RETENTION_DAYS:-14}"
+    MINIMUM_REDUNDANCY="${MINIMUM_REDUNDANCY:-2}"
+    HEALTHCHECK_MAX_AGE_SECONDS="${HEALTHCHECK_MAX_AGE_SECONDS:-129600}"
+    WAL_RETENTION_DAYS="${WAL_RETENTION_DAYS:-15}"
+}
+
+manifest_rows() {
+    local item path
+    while IFS= read -r item; do
+        path="$(jq -r '.Path' <<<"$item")"
+        rclone cat "${RCLONE_DESTINATION}/basebackups/${path}" | \
+            jq -r '[.created_epoch,.backup_name] | @tsv'
+    done < <(rclone lsjson "${RCLONE_DESTINATION}/basebackups" --recursive --files-only \
+        --include '*/manifest.json' | jq -c '.[]')
+}
+
+latest_epoch() {
+    local latest
+    latest="$(manifest_rows | cut -f1 | sort -n | tail -1)"
+    [[ -n "$latest" ]] || exit 3
+    printf '%s\n' "$latest"
+}
+
+next_serial() {
+    local day="$1" latest
+    [[ "$day" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "invalid serial date: $day"
+    latest="$(manifest_rows | cut -f2 | sed -nE "s/^${day}-([0-9]+)(-|$).*/\\1/p" | sort -n | tail -1)"
+    printf '%d\n' "$(( ${latest:-0} + 1 ))"
+}
+
+publish() {
+    local stage="$1" name destination
+    [[ -r "$stage/manifest.json" && -r "$stage/checksums.sha256" ]] || die "invalid stage: $stage"
+    name="$(jq -er '.backup_name' "$stage/manifest.json")"
+    destination="${RCLONE_DESTINATION}/basebackups/${name}"
+    rclone copy "$stage" "$destination" --exclude '/manifest.json'
+    rclone copyto "$stage/manifest.json" "$destination/manifest.json"
+}
+
+retain() {
+    local cutoff rows keep epoch name
+    cutoff=$(( $(date +%s) - RETENTION_DAYS * 86400 ))
+    rows="$(manifest_rows | sort -nr)"
+    keep=0
+    while IFS=$'\t' read -r epoch name; do
+        [[ -n "$epoch" ]] || continue
+        keep=$((keep + 1))
+        if (( keep > MINIMUM_REDUNDANCY && epoch < cutoff )); then
+            rclone purge "${RCLONE_DESTINATION}/basebackups/${name}"
+        fi
+    done <<<"$rows"
+    rclone delete "${RCLONE_DESTINATION}/objects/wal" --min-age "${WAL_RETENTION_DAYS}d" --rmdirs || true
+}
+
+put_file() {
+    local source="$1" key="$2"
+    [[ "$key" =~ ^[A-Za-z0-9._/-]+$ && "$key" != /* && "$key" != *..* ]] || die "invalid object key"
+    rclone copyto "$source" "${RCLONE_DESTINATION}/objects/${key}"
+}
+
+get_file() {
+    local key="$1" destination="$2"
+    [[ "$key" =~ ^[A-Za-z0-9._/-]+$ && "$key" != /* && "$key" != *..* ]] || die "invalid object key"
+    rclone copyto "${RCLONE_DESTINATION}/objects/${key}" "$destination"
+}
+
+connectivitycheck() { rclone lsd "$RCLONE_DESTINATION" >/dev/null; }
+
+healthcheck() {
+    local latest age
+    latest="$(latest_epoch)" || { echo "CRITICAL: no completed exported backup"; exit 2; }
+    age=$(( $(date +%s) - latest ))
+    if (( age < 0 || age > HEALTHCHECK_MAX_AGE_SECONDS )); then echo "CRITICAL: latest exported backup is ${age}s old"; exit 2; fi
+    echo "OK: latest exported backup is ${age}s old"
+}
+
+main() {
+    load_config
+    case "${1:-}" in
+        latest-epoch) latest_epoch ;;
+        next-serial) [[ $# -eq 2 ]] || exit 64; next_serial "$2" ;;
+        publish) [[ $# -eq 2 ]] || exit 64; publish "$2" ;;
+        retain) retain ;;
+        connectivitycheck) connectivitycheck ;;
+        healthcheck) healthcheck ;;
+        put-file) [[ $# -eq 3 ]] || exit 64; put_file "$2" "$3" ;;
+        get-file) [[ $# -eq 3 ]] || exit 64; get_file "$2" "$3" ;;
+        *) die "unsupported command: ${1:-none}" ;;
+    esac
+}
+
+main "$@"

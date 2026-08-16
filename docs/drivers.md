@@ -1,79 +1,59 @@
-# Driver development
+# Driver and exporter development
 
-Backmaster drivers isolate storage-engine knowledge from fleet orchestration.
-A driver receives its instance environment from the core and may load one
-non-secret configuration file plus one secrets file.
+Backmaster separates data consistency from storage transport with a durable
+local staging boundary.
 
-## Required commands
+## Lifecycle
 
-### `latest-epoch`
+1. The core acquires the instance's Consul lock and asks the exporter for the
+   latest committed backup.
+2. The core resolves the backup name and creates a private partial stage under
+   `STAGING_ROOT/INSTANCE`.
+3. The driver runs `prepare PAYLOAD_DIR`. It may only produce local files.
+4. The core adds `checksums.sha256` and `manifest.json`, then atomically renames
+   the directory to `*.ready`.
+5. The exporter publishes the ready stage. It uploads `manifest.json` last; the
+   manifest is the remote commit marker.
+6. Only after a successful publish does the core remove local staging and run
+   exporter retention.
 
-Print exactly one Unix epoch for the newest durable, completed backup. Exit 3
-when the repository contains no completed backup. Any other non-zero status is
-an operational failure and prevents a new backup from starting.
+If export fails, the ready stage remains locally. The next locked run exports
+it before considering a new backup. Partial remote objects are never visible
+as completed backups because they have no committed manifest.
 
-### `backup`
+## Driver contract
 
-Create a consistent backup and return only after durable remote storage has
-acknowledged it. A driver should stream or use bounded staging space. It must
-not assume `/mnt/data` exists.
+Drivers own consistency and archive production, never credentials, remote
+catalogues, upload, or retention.
 
-### `retain`
+| Command | Contract |
+| --- | --- |
+| `prepare PAYLOAD_DIR` | Produce a self-contained backup in the empty directory |
+| `connectivitycheck` | Validate local source access and required tools |
+| `healthcheck` | Validate source-specific backup readiness |
 
-Apply the configured retention policy. It runs only after `backup` succeeds.
-Retention should preserve a minimum redundancy and remove no recovery material
-needed by the oldest retained backup.
+The core exports `BACKUP_NAME`. A driver must not write outside its supplied
+payload directory except for explicitly documented transient operations.
 
-### `healthcheck`
+## Exporter contract
 
-Check technology-specific recovery health. At minimum, validate base-backup
-freshness. Drivers with continuous logs or journals should validate those too.
+Exporters own remote storage, credentials, catalogue queries, commit semantics,
+and retention.
 
-### `connectivitycheck`
+| Command | Contract |
+| --- | --- |
+| `latest-epoch` | Print newest committed manifest epoch, or exit 3 when empty |
+| `next-serial DATE` | Print the next positive serial for a UTC day |
+| `publish STAGE_DIR` | Durably publish payload, checksums, then manifest last |
+| `retain` | Apply remote retention after a successful publish |
+| `connectivitycheck` | Authenticate and verify the destination |
+| `healthcheck` | Validate remote backup freshness |
 
-Authenticate and verify repository access without writing backup data.
+The optional `put-file SOURCE KEY` and `get-file KEY DESTINATION` verbs support
+continuous recovery streams such as PostgreSQL WAL without exposing a storage
+provider to the data driver.
 
-### `next-serial DATE`
-
-Required when an instance uses `BACKUP_NAME_MODE=daily-serial`. Inspect the
-durable shared catalogue and print the next positive integer for the supplied
-UTC date. The core holds the distributed instance lock during this call, then
-exports the complete `BACKUP_NAME` before invoking `backup`.
-
-## Semantics owned by the core
-
-The core owns:
-
-- Consul mutual exclusion per instance;
-- runner priority through staggered timers;
-- shared-catalogue freshness and fallback;
-- UTC naming shape, hostname/custom suffix resolution, and name validation;
-- structured start/skip/complete logging;
-- systemd lifecycle and resource priority.
-
-Drivers own:
-
-- consistency mechanism (`pg_basebackup`, `mongodump`, filesystem snapshot,
-  mail-aware copy, and so on);
-- archive format and cloud client;
-- recovery-material retention;
-- restore tooling and documentation.
-
-The `backup` command must use the core-provided `BACKUP_NAME`. A driver owns
-serial lookup because catalogue metadata and query tools are backend-specific.
-
-Drivers that require a service-owned identity should ship instance-specific
-systemd drop-ins. Do not bake a database or mail user into the shared unit:
-PostgreSQL can run as `postgres`, MongoDB as a purpose-made backup identity,
-and Maildir backup as an identity with narrowly scoped read access.
-
-## Example future drivers
-
-| Driver | Likely consistency mechanism | Notes |
-| --- | --- | --- |
-| `mongo` | `mongodump --archive --gzip` or filesystem snapshot | Replica-set oplog/PITR policy must be explicit |
-| `mail` | Dovecot-aware snapshot or consistent Maildir archive | Preserve UID/GID, xattrs, ACLs, and symlinks |
-| `filesystem` | snapshot plus streamed `tar`/restic | Do not silently cross mount points |
-
-Do not force every driver into one archive implementation. The shared contract
-is lifecycle and observability, not a universal file format.
+The bundled `rclone` exporter works with Azure Blob and other rclone backends.
+Moving away from Azure normally requires only a new rclone remote and
+`RCLONE_DESTINATION`; a purpose-built exporter can be added without changing a
+driver.

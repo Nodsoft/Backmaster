@@ -5,19 +5,29 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-mkdir -p "$TMP/config/instances.d" "$TMP/install/drivers/fake" "$TMP/bin"
+mkdir -p "$TMP/config/instances.d" "$TMP/install/drivers/fake" \
+    "$TMP/install/exporters/fake" "$TMP/bin" "$TMP/staging"
 
 cat >"$TMP/install/drivers/fake/driver" <<'DRIVER'
 #!/usr/bin/env bash
 case "$1" in
-    latest-epoch) exit 3 ;;
-    next-serial) printf '7\n' ;;
-    backup) printf '%s\n' "$BACKUP_NAME" >"$TEST_OUTPUT" ;;
-    retain) ;;
+    prepare) printf 'payload\n' >"$2/data" ;;
     *) exit 64 ;;
 esac
 DRIVER
 chmod +x "$TMP/install/drivers/fake/driver"
+
+cat >"$TMP/install/exporters/fake/exporter" <<'EXPORTER'
+#!/usr/bin/env bash
+case "$1" in
+    latest-epoch) exit 3 ;;
+    next-serial) printf '7\n' ;;
+    publish) jq -r .backup_name "$2/manifest.json" >"$TEST_OUTPUT" ;;
+    retain) ;;
+    *) exit 64 ;;
+esac
+EXPORTER
+chmod +x "$TMP/install/exporters/fake/exporter"
 
 cat >"$TMP/bin/date" <<'DATE'
 #!/usr/bin/env bash
@@ -54,6 +64,8 @@ run_case() {
 INSTANCE_NAME=test
 NODE_NAME=test-node
 DRIVER=fake
+EXPORTER=fake
+STAGING_ROOT=$TMP/staging
 MAX_AGE_SECONDS=1
 BACKUP_NAME_MODE=$mode
 BACKUP_NAME_SUFFIX_MODE=$suffix_mode
@@ -72,4 +84,3 @@ EOF
 run_case daily none "" 2026-08-02
 run_case daily-serial hostname "" 2026-08-02-007-axon
 run_case daily-time custom primary 2026-08-02T151423Z-primary
-

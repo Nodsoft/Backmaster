@@ -1,107 +1,79 @@
 # Backmaster
 
-Backmaster is a small, fleet-oriented backup runner. Backup technologies live
-in drivers; scheduling, priority/fallback, distributed locking, freshness, and
-health reporting stay in the core.
+Backmaster is a fleet-oriented backup orchestrator with three independent
+layers:
 
-PostgreSQL is the first driver. MongoDB, mail, filesystem trees, and other
-services can be added without copying the orchestration logic.
-
-## Model
-
-| Concept | Example | Responsibility |
+| Layer | Owns | Does not own |
 | --- | --- | --- |
-| Instance | `nsys-postgres` | One protected dataset and its policy |
-| Driver | `postgres` | Technology-specific backup/restore commands |
-| Runner | `axon` | A fleet node capable of executing the instance |
-| Repository | Azure Blob prefix | Durable off-node backup catalogue |
+| Core | scheduling, Axon/Myelin fallback, Consul locking, naming, staging | database consistency or cloud APIs |
+| Driver | consistent local backup production | credentials, upload, catalogue, retention |
+| Exporter | durable publication, remote catalogue, retention | PostgreSQL, MongoDB, mail semantics |
 
-Every capable node receives the same instance name and driver configuration.
-Its timer determines priority:
+PostgreSQL is the first driver. The bundled rclone exporter targets Azure Blob
+today, but can target another rclone backend through configuration or be
+replaced with another exporter.
 
-- Axon attempts `nsys-postgres` at 02:15 UTC.
-- Myelin attempts it at 03:15 UTC.
-- Myelin sees Axon's fresh backup and exits successfully, or runs when Axon's
-  backup is missing.
-- A Consul lock prevents overlapping runs.
+## Staging cycle
 
-There is no `/mnt/data` dependency. The PostgreSQL driver streams compressed
-physical backups to Azure Blob Storage in bounded multipart chunks.
+Backmaster builds each backup below `STAGING_ROOT/INSTANCE` as a partial stage.
+The driver writes only `payload/`; the core adds checksums and a JSON manifest,
+then promotes the directory to `*.ready`. The exporter uploads the manifest
+last as the remote commit marker. Local data is deleted only after publication
+succeeds.
 
-## Driver contract
+A failed export leaves the ready stage in place. The next run resumes that
+export before creating another backup. This bounds normal local usage to one
+compressed backup plus small metadata and avoids `/mnt/data` entirely.
 
-A driver is an executable named `drivers/<name>/driver`. Backmaster invokes:
+```mermaid
+flowchart TD
+    A["Core lock + name"] --> B["Driver prepares local payload"]
+    B --> C["Core seals ready stage"]
+    C --> D["Exporter publishes payload"]
+    D --> E["Manifest commits backup"]
+    E --> F["Core cleans stage + retains"]
+```
 
-| Command | Output / behavior |
-| --- | --- |
-| `latest-epoch` | Print the latest completed backup's Unix epoch, or exit 3 if none exists |
-| `backup` | Create and durably upload one backup |
-| `retain` | Apply the instance's retention policy |
-| `healthcheck` | Validate backup-specific health and exit non-zero when unhealthy |
-| `connectivity` | Check repository access without creating data |
+## PostgreSQL flow
 
-Drivers may expose extra verbs through `backmaster driver INSTANCE VERB ...`.
-The PostgreSQL driver adds `wal-archive` and `wal-restore` for Patroni.
+The PostgreSQL driver uses `pg_basebackup` against node-local port 5431. It
+creates compressed tar archives with streamed WAL, so every base backup is
+self-contained. Continuous WAL is archived through the exporter's generic
+object interface for point-in-time recovery; the driver contains no Azure or
+rclone configuration.
 
-The core guarantees that `latest-epoch`, `backup`, and `retain` execute while
-holding the instance's distributed lock. A driver must not implement its own
-fleet priority rules.
+Axon attempts first, Myelin uses a delayed timer, remote manifest freshness
+decides fallback, and the Consul lock prevents overlap. PostgreSQL 18 supports
+base backups from a suitably configured standby, so both nodes can produce the
+same flow.
 
-## Backup naming
+## Naming
 
-Naming is configured per instance and resolved while the distributed lock is
-held. `BACKUP_NAME_MODE` accepts:
-
-| Mode | Example |
+| `BACKUP_NAME_MODE` | Example |
 | --- | --- |
 | `daily` | `2026-08-02` |
 | `daily-serial` | `2026-08-02-001` |
 | `daily-time` | `2026-08-02T151423Z` |
 
-All dates and times are UTC. `BACKUP_NAME_SUFFIX_MODE` accepts `none`,
-`hostname`, or `custom`. The hostname mode appends the runner's short hostname;
-custom mode appends `BACKUP_NAME_SUFFIX_VALUE`. For example, a daily serial
-backup with custom suffix `axon` is named `2026-08-02-001-axon`.
-
-`daily-time` with a hostname suffix is the default. Drivers supporting
-`daily-serial` implement the repository-aware `next-serial DATE` command so
-serials remain monotonic across all runners sharing the catalogue.
+`BACKUP_NAME_SUFFIX_MODE` is `none`, `hostname`, or `custom`. A custom suffix
+uses `BACKUP_NAME_SUFFIX_VALUE`. Naming is UTC and serial lookup belongs to the
+exporter catalogue, not the data driver.
 
 ## Layout
 
 ```text
-bin/backmaster                 generic orchestrator
-drivers/postgres/driver       first backup driver
-config/instances/             instance examples
-config/drivers/               driver examples and secrets templates
+bin/backmaster                 generic lifecycle and staging
+drivers/postgres/driver       local PostgreSQL archive producer
+exporters/rclone/exporter     remote storage and retention
+config/                       instance, driver, and exporter examples
 systemd/                      reusable service/health templates
-deploy/{axon,myelin}/         per-node timer examples
-docs/                         architecture and recovery decisions
+deploy/{axon,myelin}/         staggered timer examples
+docs/                         contracts and recovery runbook
 ```
 
-## PostgreSQL flow
-
-The first flow uses Barman Cloud:
-
-- daily physical base backup through node-local PostgreSQL on port 5431;
-- gzip compression and multipart streaming directly to Azure Blob Storage;
-- continuous WAL archiving for point-in-time recovery;
-- 14-day recovery window with at least two base backups;
-- physical recovery of the entire PostgreSQL 18 cluster.
-
-Azure Blob Storage serves the same architectural role as S3 but is not an
-S3-compatible API. The driver uses Barman's native `azure-blob-storage`
-provider.
-
-## Installation sketch
-
-Install the project under `/opt/backmaster`, link `bin/backmaster` into
-`/usr/local/bin`, and install the systemd units. Create an unprivileged
-`backmaster` service account for the generic default. Each driver can ship an
-instance-specific systemd drop-in selecting a narrower service identity; the
-PostgreSQL example runs as `postgres`. Copy the instance and driver
-configuration into `/etc/backmaster`; PostgreSQL secrets must be
-`0640 root:postgres`.
+Install under `/opt/backmaster`, configuration under `/etc/backmaster`, and the
+CLI under `/usr/local/bin/backmaster`. The PostgreSQL systemd drop-in runs the
+flow as `postgres`; exporter secrets should be `0640 root:postgres`.
 
 ```bash
 sudo -u postgres backmaster connectivity nsys-postgres
@@ -109,23 +81,6 @@ sudo -u postgres backmaster run nsys-postgres --force
 sudo -u postgres backmaster health nsys-postgres
 ```
 
-Enable Axon's timer on Axon and Myelin's timer on Myelin. Enable the generic
-health timer on both:
-
-```bash
-systemctl enable --now backmaster@nsys-postgres.timer
-systemctl enable --now backmaster-health@nsys-postgres.timer
-```
-
-Do not treat a flow as production-ready until its restore runbook has passed on
-an isolated host.
-
-## Adding another flow
-
-For MongoDB, add `drivers/mongo/driver`, an instance such as
-`config/instances/nsys-mongo.env.example`, and driver-specific configuration.
-No changes to `bin/backmaster` or the systemd service templates should be
-needed.
-
-See [driver development](docs/drivers.md) for the exact lifecycle and failure
-semantics.
+See [driver and exporter development](docs/drivers.md) and the
+[PostgreSQL restore runbook](docs/postgres-restore.md). Do not consider a flow
+production-ready until an isolated restore drill passes.

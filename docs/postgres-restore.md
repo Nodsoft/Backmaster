@@ -1,48 +1,47 @@
 # PostgreSQL restore draft
 
-The PostgreSQL flow is physical disaster recovery: Barman Cloud base backups
-plus continuous WAL. It restores the entire PostgreSQL 18 cluster and supports
-point-in-time recovery.
+The PostgreSQL flow produces a compressed tar-format `pg_basebackup` plus a
+Backmaster checksum file and manifest. Streamed WAL makes each base backup
+self-contained; separately archived WAL enables point-in-time recovery.
 
-Before production sign-off, prove all of these on an isolated host:
+Before production sign-off, prove backups from Axon and Myelin, fallback after
+Axon failure, latest restore, point-in-time restore, staging disk bounds, stale
+backup alerting, and failed WAL-archive alerting on an isolated host.
 
-- a completed backup initiated by Axon;
-- a completed backup initiated by Myelin while it is a standby;
-- Axon failure followed by Myelin fallback;
-- a latest restore;
-- a point-in-time restore between two known transactions;
-- measured local temporary disk use;
-- alerting for stale base backup and failed WAL archiving.
+## Fetch and verify
 
-List the catalogue:
+Load the exporter configuration and list committed manifests. A backup without
+`manifest.json` is incomplete and must not be restored.
 
 ```bash
-sudo -u postgres backmaster connectivity nsys-postgres
-
 set -a
-source /etc/backmaster/drivers/postgres/nsys-postgres.env
-source /etc/backmaster/secrets/nsys-postgres.env
+source /etc/backmaster/exporters/rclone/nsys-postgres.env
+source /etc/backmaster/secrets/nsys-postgres-exporter.env
 set +a
 
-barman-cloud-backup-list \
-  --cloud-provider azure-blob-storage \
-  "$AZURE_DESTINATION" "$BARMAN_SERVER_NAME"
+rclone lsf "$RCLONE_DESTINATION/basebackups" --dirs-only
+rclone copy \
+  "$RCLONE_DESTINATION/basebackups/REPLACE_BACKUP_NAME" \
+  /var/tmp/backmaster-restore
+
+cd /var/tmp/backmaster-restore
+sha256sum --check checksums.sha256
 ```
 
-Restore into an empty, isolated PostgreSQL data directory:
+## Restore the base backup
+
+Extract `base.tar.*` into an empty PostgreSQL data directory. Extract each
+tablespace archive at the location described by `tablespace_map`. Extract
+`pg_wal.tar.*` into `pg_wal` when present. Preserve PostgreSQL ownership and
+permissions.
+
+For PITR, configure PostgreSQL's `restore_command` to call:
 
 ```bash
-barman-cloud-restore \
-  --cloud-provider azure-blob-storage \
-  "$AZURE_DESTINATION" \
-  "$BARMAN_SERVER_NAME" \
-  latest \
-  /var/lib/postgresql/18/restore-test
+backmaster driver nsys-postgres wal-restore %f %p
 ```
 
-Configure the Backmaster `wal-restore` command as PostgreSQL's
-`restore_command`, create `recovery.signal`, and start PostgreSQL on an isolated
-port. For a total Patroni loss, recover one authoritative node first; form the
-new cluster around it, then let Patroni clone all replicas from that recovered
-primary. Never start two independently restored copies as peers.
-
+Create `recovery.signal`, set the desired recovery target, and start PostgreSQL
+on an isolated port. For a total Patroni loss, recover one authoritative node
+first, form the new cluster around it, and let Patroni clone replicas from that
+node. Never start two independently restored copies as peers.

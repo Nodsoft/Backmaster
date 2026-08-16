@@ -13,7 +13,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y shellcheck
-      - run: shellcheck bin/* drivers/*/driver
-      - run: bash -n bin/* drivers/*/driver
+      - run: shellcheck bin/* drivers/*/driver exporters/*/exporter
+      - run: bash -n bin/* drivers/*/driver exporters/*/exporter
       - run: bash tests/naming.bash
-      - run: bash tests/postgres-naming.bash
+      - run: bash tests/staging.bash
+      - run: bash tests/rclone-exporter.bash
