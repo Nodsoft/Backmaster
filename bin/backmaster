@@ -3,7 +3,8 @@ set -Eeuo pipefail
 
 readonly CONFIG_ROOT="${BACKMASTER_CONFIG_ROOT:-/etc/backmaster}"
 readonly INSTALL_ROOT="${BACKMASTER_INSTALL_ROOT:-/usr/lib/backmaster}"
-readonly SELF="$(readlink -f "$0")"
+SELF="$(readlink -f "$0")"
+readonly SELF
 readonly BACKMASTER_VERSION="@BACKMASTER_VERSION@"
 
 log() {

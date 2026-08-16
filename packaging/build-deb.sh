@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly ROOT
 readonly OUT_DIR="${OUT_DIR:-${ROOT}/dist}"
 readonly ARCH="${ARCH:-$(dpkg --print-architecture)}"
 readonly PACKAGE="backmaster"
