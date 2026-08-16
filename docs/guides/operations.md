@@ -42,6 +42,27 @@ sudo systemctl start backmaster@production-postgres.service
 systemctl status backmaster@production-postgres.service
 ```
 
+## Direct CLI runs
+
+Prefer starting the service for backup runs. `StateDirectory=backmaster/%i`
+creates `/var/lib/backmaster/INSTANCE` for the unit's effective user; a direct
+`sudo -u postgres backmaster run …` bypasses that systemd setup.
+
+If a direct invocation is required, create the default state path first:
+
+```bash
+sudo install -d -o root -g root -m 0755 /var/lib/backmaster
+sudo install -d -o postgres -g postgres -m 0750 \
+  /var/lib/backmaster/production-postgres
+sudo -u postgres backmaster run production-postgres --force
+```
+
+For a custom `STAGING_ROOT`, substitute its configured path. The instance
+directory must be writable by the account running Backmaster and should not be
+writable by unrelated users. Backmaster now stops before invoking the driver if
+the parent cannot be created or written; it reports the failing path instead of
+continuing with an invalid `/payload` path.
+
 ## Logs
 
 The core emits key-value logs containing the instance and node. Follow a run:

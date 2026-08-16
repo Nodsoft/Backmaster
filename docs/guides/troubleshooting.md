@@ -161,9 +161,16 @@ again.
 ### Inspect AzCopy transfer details
 
 Review the service journal first. If deeper transfer diagnostics are needed,
-set `AZCOPY_LOG_LOCATION` and `AZCOPY_JOB_PLAN_LOCATION` to protected writable
-directories outside the backup stage, reproduce the failure, and inspect those
-files. They may contain storage names and operational metadata.
+inspect `/var/lib/backmaster/INSTANCE/azcopy/logs`. Backmaster defaults both
+AzCopy work locations below the writable instance state directory. A message
+such as `open /var/lib/postgresql/.azcopy/...: read-only file system` indicates
+an older exporter that did not set those locations; upgrade
+`backmaster-exporter-azcopy` and rerun the service.
+
+Custom `AZCOPY_LOG_LOCATION` and `AZCOPY_JOB_PLAN_LOCATION` values must be
+absolute, protected writable directories outside the backup stage and allowed
+by the unit's systemd sandbox. AzCopy files may contain storage names and
+operational metadata.
 
 ## Disk space
 
@@ -178,6 +185,27 @@ A `.ready` directory is recoverable work and should normally be resumed. A stale
 `.partial.*` directory came from interrupted driver production. Before removing
 one, confirm the service is stopped and no Backmaster or `pg_basebackup` process
 uses it.
+
+### Staging parent cannot be created or written
+
+Errors such as `staging_parent_create_failed` and
+`staging_parent_not_writable` mean the effective service account cannot use
+`STAGING_ROOT/INSTANCE`. Start backup runs through the systemd unit so its
+`StateDirectory=` setup runs:
+
+```bash
+sudo systemctl start backmaster@production-postgres.service
+```
+
+For deliberate direct CLI runs, create the directory with the ownership shown
+in the [operations guide](operations.md#direct-cli-runs). Check the effective
+unit identity and path with:
+
+```bash
+systemctl show backmaster@production-postgres.service \
+  -p User -p Group -p StateDirectory
+namei -l /var/lib/backmaster/production-postgres
+```
 
 ## A backup is skipped unexpectedly
 

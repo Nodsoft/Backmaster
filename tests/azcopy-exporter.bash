@@ -37,6 +37,19 @@ cat >"$temporary/bin/azcopy" <<'AZCOPY'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+[[ "${AZCOPY_LOG_LOCATION:-}" == "$TEST_STATE/azcopy/logs" ]] || {
+    echo "AzCopy log location was not exported" >&2
+    exit 1
+}
+[[ "${AZCOPY_JOB_PLAN_LOCATION:-}" == "$TEST_STATE/azcopy/plans" ]] || {
+    echo "AzCopy job-plan location was not exported" >&2
+    exit 1
+}
+[[ -d "$AZCOPY_LOG_LOCATION" && -d "$AZCOPY_JOB_PLAN_LOCATION" ]] || {
+    echo "AzCopy work directories were not created" >&2
+    exit 1
+}
+
 key_from_url() {
     local url="${1%%\?*}"
     printf '%s\n' "${url#https://account.blob.core.windows.net/backups/backmaster/}"
@@ -78,12 +91,19 @@ AZCOPY
 chmod +x "$temporary/bin/azcopy"
 
 run_exporter() {
-    PATH="$temporary/bin:$PATH" TEST_REMOTE="$temporary/remote" \
-        TEST_LOG="$temporary/log" EXPORTER_CONFIG="$temporary/config.env" \
+    HOME=/var/lib/postgresql BACKMASTER_STATE_DIRECTORY="$temporary/state" \
+        PATH="$temporary/bin:$PATH" TEST_REMOTE="$temporary/remote" \
+        TEST_LOG="$temporary/log" TEST_STATE="$temporary/state" \
+        EXPORTER_CONFIG="$temporary/config.env" \
         "$ROOT/exporters/azcopy/exporter" "$@"
 }
 
 run_exporter connectivitycheck
+[[ -d "$temporary/state/azcopy/logs" && \
+    -d "$temporary/state/azcopy/plans" ]] || {
+    echo "AzCopy work directories were not created in instance state" >&2
+    exit 1
+}
 run_exporter publish "$temporary/stage" >/dev/null
 last_put="$(grep '^PUT ' "$temporary/log" | tail -1)"
 [[ "$last_put" == *'/basebackups/2026-08-02-006-axon/manifest.json?sig=test' ]] || {

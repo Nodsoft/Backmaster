@@ -41,6 +41,8 @@ WAL_RETENTION_DAYS=15
 | --- | --- | --- |
 | `AZCOPY_DESTINATION` | required | HTTPS Blob container URL plus an optional instance-specific prefix |
 | `AZCOPY_SAS_TOKEN` | empty | Optional SAS query string; keep it in the secret file |
+| `AZCOPY_LOG_LOCATION` | instance state | Absolute directory for AzCopy logs |
+| `AZCOPY_JOB_PLAN_LOCATION` | instance state | Absolute directory for AzCopy job plans |
 | `RETENTION_DAYS` | `14` | Days to retain committed backups; `unlimited` or `none` disables their cleanup |
 | `MINIMUM_REDUNDANCY` | `2` | Minimum count of newest committed backups protected from age-based cleanup |
 | `HEALTHCHECK_MAX_AGE_SECONDS` | `129600` | Maximum acceptable committed-backup age |
@@ -145,9 +147,13 @@ Normal operator checks use the higher-level interface:
 
 ```bash
 sudo -u postgres backmaster connectivity production-postgres
-sudo -u postgres backmaster run production-postgres --force
+sudo systemctl start backmaster@production-postgres.service
 sudo -u postgres backmaster health production-postgres
 ```
+
+The service creates the instance staging directory for its effective user. If
+you need a direct CLI backup, prepare that directory as described in
+[Operations](../guides/operations.md#direct-cli-runs).
 
 ## Retention
 
@@ -189,10 +195,17 @@ Before enabling a timer:
 4. Download and restore the backup, including checksum verification.
 5. Exercise retention against a disposable prefix.
 
-AzCopy writes job plans and logs to its configured locations. Use
-`AZCOPY_JOB_PLAN_LOCATION` and `AZCOPY_LOG_LOCATION` in the exporter policy when
-the service account's default locations are unsuitable. Do not put these below
-the Backmaster stage that is being transferred.
+Backmaster sets AzCopy's job-plan and log locations to
+`/var/lib/backmaster/INSTANCE/azcopy/plans` and
+`/var/lib/backmaster/INSTANCE/azcopy/logs`. It creates both directories before
+the first AzCopy command, including catalogue and health checks. This prevents
+AzCopy from falling back to the service user's home, which is read-only under
+the packaged systemd sandbox.
+
+Override `AZCOPY_JOB_PLAN_LOCATION` or `AZCOPY_LOG_LOCATION` in the exporter
+policy only when necessary. Overrides must be absolute, writable by the unit's
+effective user, permitted by the systemd sandbox, and outside the staged backup
+payload.
 
 If publication fails, Backmaster preserves the local `.ready` stage. Correct
 authentication or destination access and run the instance again; publication
