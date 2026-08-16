@@ -15,7 +15,7 @@ Consul, jq, systemd, coreutils, and findutils. A usable flow additionally needs:
 - synchronized system clocks on all participating nodes.
 
 The PostgreSQL driver depends on `postgresql-client` and `gzip`. The rclone
-exporter depends on `rclone`.
+exporter depends on `rclone`; the AzCopy exporter depends on `azcopy`.
 
 ## Install Debian packages
 
@@ -33,6 +33,15 @@ sudo apt install \
   backmaster-core \
   backmaster-driver-postgres \
   backmaster-exporter-rclone
+```
+
+For an Azure-native combination, replace the last package:
+
+```bash
+sudo apt install \
+  backmaster-core \
+  backmaster-driver-postgres \
+  backmaster-exporter-azcopy
 ```
 
 All component packages require the exact same core version. Upgrade them from
@@ -72,7 +81,8 @@ health services as `postgres` so local peer authentication and data access work.
 sudo install -d -m 0755 \
   /etc/backmaster/instances.d \
   /etc/backmaster/drivers/postgres \
-  /etc/backmaster/exporters/rclone
+  /etc/backmaster/exporters/rclone \
+  /etc/backmaster/exporters/azcopy
 sudo install -d -m 0750 -o root -g postgres /etc/backmaster/secrets
 ```
 
@@ -89,7 +99,7 @@ VERSION=0.1.0 ARCH=all ./packaging/build-deb.sh
 ```
 
 The output directory defaults to `dist/` and contains the core, PostgreSQL
-driver, rclone exporter, and metapackage. Override it with `OUT_DIR=/path`.
+driver, both exporters, and metapackage. Override it with `OUT_DIR=/path`.
 
 ## Verify the install
 

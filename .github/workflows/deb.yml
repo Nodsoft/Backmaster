@@ -30,7 +30,7 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t packages < <(find dist -maxdepth 1 -type f -name '*.deb' -print | sort)
-          test "${#packages[@]}" -eq 4
+          test "${#packages[@]}" -eq 5
           for package in "${packages[@]}"; do
             dpkg-deb --info "$package"
             dpkg-deb --contents "$package"
@@ -43,6 +43,7 @@ jobs:
             "backmaster ${{ steps.nbgv.outputs.semver2 }}"
           test -x "$package_root/usr/lib/backmaster/drivers/postgres/driver"
           test -x "$package_root/usr/lib/backmaster/exporters/rclone/exporter"
+          test -x "$package_root/usr/lib/backmaster/exporters/azcopy/exporter"
 
       - name: Upload package artifact
         uses: actions/upload-artifact@v4

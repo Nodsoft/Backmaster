@@ -3,7 +3,7 @@
 This guide covers shared instance configuration. Component-specific behavior is
 documented with the installed component: see the
 [PostgreSQL driver](../drivers/postgresql.md) and
-[rclone exporter](../exporters/rclone.md).
+[rclone](../exporters/rclone.md) or [AzCopy](../exporters/azcopy.md) exporter.
 
 An instance joins one driver to one exporter. Its name is the filename below
 `/etc/backmaster/instances.d` without `.env` and must contain lowercase letters,
@@ -182,10 +182,29 @@ can list, read, write, and delete within only the intended destination. The
 [rclone exporter reference](../exporters/rclone.md) documents other backends,
 commands, remote layout, and retention behavior.
 
+## AzCopy exporter
+
+Select `EXPORTER=azcopy`, point `EXPORTER_CONFIG` at an AzCopy policy file, and
+use an HTTPS Blob container URL with an optional instance-specific prefix:
+
+```bash
+AZCOPY_DESTINATION=https://example.blob.core.windows.net/backups/production-postgresql
+RETENTION_DAYS=14
+MINIMUM_REDUNDANCY=2
+HEALTHCHECK_MAX_AGE_SECONDS=129600
+WAL_RETENTION_DAYS=15
+```
+
+Keep `AZCOPY_AUTO_LOGIN_TYPE` and service-principal or SAS values in the
+protected exporter secret file. Prefer `AZCOPY_AUTO_LOGIN_TYPE=MSI` on Azure
+hosts. The [AzCopy exporter reference](../exporters/azcopy.md) documents all
+supported authentication patterns, catalogue behavior, commands, and
+retention.
+
 ## Remote layout
 
 ```text
-RCLONE_DESTINATION/
+EXPORTER_DESTINATION/
 ├── basebackups/
 │   └── BACKUP_NAME/
 │       ├── payload/

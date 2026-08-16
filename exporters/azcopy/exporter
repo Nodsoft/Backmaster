@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+die() { echo "azcopy exporter: $*" >&2; exit 1; }
+
+load_config() {
+    : "${EXPORTER_CONFIG:?EXPORTER_CONFIG is required}"
+    [[ -r "$EXPORTER_CONFIG" ]] || die "cannot read $EXPORTER_CONFIG"
+    set -a
+    # shellcheck disable=SC1090
+    source "$EXPORTER_CONFIG"
+    if [[ -n "${EXPORTER_SECRET_FILE:-}" ]]; then
+        [[ -r "$EXPORTER_SECRET_FILE" ]] || die "cannot read $EXPORTER_SECRET_FILE"
+        # shellcheck disable=SC1090
+        source "$EXPORTER_SECRET_FILE"
+    fi
+    set +a
+
+    : "${AZCOPY_DESTINATION:?AZCOPY_DESTINATION is required}"
+    AZCOPY_DESTINATION="${AZCOPY_DESTINATION%/}"
+    [[ "$AZCOPY_DESTINATION" =~ ^https://[^/]+/[^/?]+ ]] || \
+        die "AZCOPY_DESTINATION must be an HTTPS container URL"
+    if [[ -n "${AZCOPY_SAS_TOKEN:-}" && "$AZCOPY_DESTINATION" == *\?* ]]; then
+        die "set a SAS in either AZCOPY_DESTINATION or AZCOPY_SAS_TOKEN, not both"
+    fi
+
+    RETENTION_DAYS="${RETENTION_DAYS:-14}"
+    MINIMUM_REDUNDANCY="${MINIMUM_REDUNDANCY:-2}"
+    HEALTHCHECK_MAX_AGE_SECONDS="${HEALTHCHECK_MAX_AGE_SECONDS:-129600}"
+    WAL_RETENTION_DAYS="${WAL_RETENTION_DAYS:-15}"
+    for value in RETENTION_DAYS MINIMUM_REDUNDANCY \
+        HEALTHCHECK_MAX_AGE_SECONDS WAL_RETENTION_DAYS; do
+        [[ "${!value}" =~ ^[0-9]+$ ]] || die "$value must be a non-negative integer"
+    done
+}
+
+encode_path() {
+    local path="$1" segment encoded="" separator=""
+    local -a segments
+    IFS=/ read -r -a segments <<<"$path"
+    for segment in "${segments[@]}"; do
+        segment="$(jq -nr --arg value "$segment" '$value | @uri')"
+        encoded+="${separator}${segment}"
+        separator=/
+    done
+    printf '%s\n' "$encoded"
+}
+
+object_url() {
+    local key="$1" base query="" encoded
+    base="${AZCOPY_DESTINATION%%\?*}"
+    if [[ "$AZCOPY_DESTINATION" == *\?* ]]; then
+        query="?${AZCOPY_DESTINATION#*\?}"
+    elif [[ -n "${AZCOPY_SAS_TOKEN:-}" ]]; then
+        query="?${AZCOPY_SAS_TOKEN#\?}"
+    fi
+    encoded="$(encode_path "$key")"
+    printf '%s/%s%s\n' "${base%/}" "$encoded" "$query"
+}
+
+azcopy_upload() {
+    azcopy copy "$1" "$(object_url "$2")" --from-to=LocalBlob \
+        --overwrite=true --check-length=true --put-md5 \
+        --output-level=essential --log-level=ERROR
+}
+
+azcopy_download() {
+    azcopy copy "$(object_url "$1")" "$2" --from-to=BlobLocal \
+        --overwrite=true --check-length=true \
+        --output-level=essential --log-level=ERROR
+}
+
+list_manifest_paths() {
+    azcopy list "$(object_url basebackups)" --machine-readable \
+        --output-level=essential --log-level=ERROR | \
+        sed -nE 's/^(INFO: )?([^;]+\/manifest\.json); .*/\2/p'
+}
+
+manifest_rows() {
+    local temporary path name directory
+    temporary="$(mktemp -d)"
+    trap 'rm -rf -- "$temporary"' RETURN
+    while IFS= read -r path; do
+        [[ -n "$path" ]] || continue
+        azcopy_download "basebackups/$path" "$temporary/manifest.json" >/dev/null
+        name="$(jq -er '.backup_name' "$temporary/manifest.json")" || \
+            die "invalid remote manifest: $path"
+        directory="${path%/manifest.json}"
+        [[ "$name" == "$directory" && "$name" =~ ^[A-Za-z0-9._-]+$ && "$name" != *..* ]] || \
+            die "manifest name does not match its remote directory: $path"
+        jq -er '[.created_epoch, .backup_name] | @tsv' \
+            "$temporary/manifest.json"
+    done < <(list_manifest_paths)
+}
+
+latest_epoch() {
+    local latest
+    latest="$(manifest_rows | cut -f1 | sort -n | tail -1)"
+    [[ -n "$latest" ]] || exit 3
+    printf '%s\n' "$latest"
+}
+
+next_serial() {
+    local day="$1" latest
+    [[ "$day" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || \
+        die "invalid serial date: $day"
+    latest="$(manifest_rows | cut -f2 | \
+        sed -nE "s/^${day}-([0-9]+)(-|$).*/\\1/p" | sort -n | tail -1)"
+    printf '%d\n' "$(( ${latest:-0} + 1 ))"
+}
+
+publish() {
+    local stage="$1" name source relative
+    [[ -r "$stage/manifest.json" && -r "$stage/checksums.sha256" ]] || \
+        die "invalid stage: $stage"
+    name="$(jq -er '.backup_name' "$stage/manifest.json")"
+    [[ "$name" =~ ^[A-Za-z0-9._-]+$ && "$name" != *..* ]] || \
+        die "invalid backup name"
+
+    while IFS= read -r -d '' source; do
+        relative="${source#"$stage"/}"
+        [[ "$relative" != manifest.json ]] || continue
+        azcopy_upload "$source" "basebackups/$name/$relative"
+    done < <(find "$stage" -type f -print0 | sort -z)
+    azcopy_upload "$stage/manifest.json" "basebackups/$name/manifest.json"
+}
+
+retain() {
+    local cutoff rows keep epoch name wal_cutoff
+    cutoff=$(( $(date +%s) - RETENTION_DAYS * 86400 ))
+    rows="$(manifest_rows | sort -nr)"
+    keep=0
+    while IFS=$'\t' read -r epoch name; do
+        [[ -n "$epoch" ]] || continue
+        keep=$((keep + 1))
+        if (( keep > MINIMUM_REDUNDANCY && epoch < cutoff )); then
+            azcopy remove "$(object_url "basebackups/$name")" --recursive=true \
+                --output-level=essential --log-level=ERROR
+        fi
+    done <<<"$rows"
+
+    wal_cutoff="$(date -u -d "@$(($(date +%s) - WAL_RETENTION_DAYS * 86400))" \
+        '+%Y-%m-%dT%H:%M:%SZ')"
+    azcopy remove "$(object_url objects/wal)" --recursive=true \
+        --include-before="$wal_cutoff" --output-level=essential \
+        --log-level=ERROR || true
+}
+
+validate_key() {
+    [[ "$1" =~ ^[A-Za-z0-9._/-]+$ && "$1" != /* && "$1" != *..* ]] || \
+        die "invalid object key"
+}
+
+put_file() {
+    local source="$1" key="$2"
+    validate_key "$key"
+    azcopy_upload "$source" "objects/$key"
+}
+
+get_file() {
+    local key="$1" destination="$2"
+    validate_key "$key"
+    azcopy_download "objects/$key" "$destination"
+}
+
+connectivitycheck() {
+    azcopy list "$(object_url '')" --machine-readable \
+        --output-level=essential --log-level=ERROR >/dev/null
+}
+
+healthcheck() {
+    local latest age
+    latest="$(latest_epoch)" || {
+        echo "CRITICAL: no completed exported backup"
+        exit 2
+    }
+    age=$(( $(date +%s) - latest ))
+    if (( age < 0 || age > HEALTHCHECK_MAX_AGE_SECONDS )); then
+        echo "CRITICAL: latest exported backup is ${age}s old"
+        exit 2
+    fi
+    echo "OK: latest exported backup is ${age}s old"
+}
+
+main() {
+    load_config
+    case "${1:-}" in
+        latest-epoch) latest_epoch ;;
+        next-serial) [[ $# -eq 2 ]] || exit 64; next_serial "$2" ;;
+        publish) [[ $# -eq 2 ]] || exit 64; publish "$2" ;;
+        retain) retain ;;
+        connectivitycheck) connectivitycheck ;;
+        healthcheck) healthcheck ;;
+        put-file) [[ $# -eq 3 ]] || exit 64; put_file "$2" "$3" ;;
+        get-file) [[ $# -eq 3 ]] || exit 64; get_file "$2" "$3" ;;
+        *) die "unsupported command: ${1:-none}" ;;
+    esac
+}
+
+main "$@"

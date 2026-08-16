@@ -15,7 +15,8 @@ package_path() { printf '%s/dist/%s_%s_all.deb\n' "$temporary" "$1" "$version"; 
 field() { dpkg-deb --field "$(package_path "$1")" "$2"; }
 contents() { dpkg-deb --contents "$(package_path "$1")"; }
 
-packages=(backmaster backmaster-core backmaster-driver-postgres backmaster-exporter-rclone)
+packages=(backmaster backmaster-core backmaster-driver-postgres \
+    backmaster-exporter-rclone backmaster-exporter-azcopy)
 for package in "${packages[@]}"; do
     [[ -f "$(package_path "$package")" ]] || { echo "missing package: $package" >&2; exit 1; }
     [[ "$(field "$package" Version)" == "$version" ]]
@@ -25,6 +26,8 @@ done
     "backmaster-core (= $version), backmaster-driver-postgres (= $version), backmaster-exporter-rclone (= $version)" ]]
 [[ "$(field backmaster-driver-postgres Depends)" == *"backmaster-core (= $version)"* ]]
 [[ "$(field backmaster-exporter-rclone Depends)" == *"backmaster-core (= $version)"* ]]
+[[ "$(field backmaster-exporter-azcopy Depends)" == *"backmaster-core (= $version)"* ]]
+[[ "$(field backmaster-exporter-azcopy Depends)" == *"azcopy"* ]]
 [[ "$(field backmaster-core Replaces)" == "backmaster (<< $version)" ]]
 [[ "$(field backmaster-driver-postgres Replaces)" == "backmaster (<< $version)" ]]
 [[ "$(field backmaster-exporter-rclone Replaces)" == "backmaster (<< $version)" ]]
@@ -44,6 +47,10 @@ if contents backmaster-core | grep '/usr/lib/backmaster/exporters/rclone/exporte
     echo "backmaster-core unexpectedly contains the rclone exporter" >&2
     exit 1
 fi
+if contents backmaster-core | grep '/usr/lib/backmaster/exporters/azcopy/exporter$' >/dev/null; then
+    echo "backmaster-core unexpectedly contains the AzCopy exporter" >&2
+    exit 1
+fi
 contents backmaster-driver-postgres | grep '/usr/lib/backmaster/drivers/postgres/driver$' >/dev/null
 contents backmaster-driver-postgres | grep '/usr/share/doc/backmaster-driver-postgres/drivers/postgresql.md$' >/dev/null
 contents backmaster-driver-postgres | grep '/usr/share/doc/backmaster-driver-postgres/guides/postgres-restore.md$' >/dev/null
@@ -55,6 +62,22 @@ contents backmaster-exporter-rclone | grep '/usr/lib/backmaster/exporters/rclone
 contents backmaster-exporter-rclone | grep '/usr/share/doc/backmaster-exporter-rclone/exporters/rclone.md$' >/dev/null
 if contents backmaster-exporter-rclone | grep '/usr/bin/backmaster$' >/dev/null; then
     echo "backmaster-exporter-rclone unexpectedly contains the core CLI" >&2
+    exit 1
+fi
+if contents backmaster-exporter-rclone | grep '/azcopy' >/dev/null; then
+    echo "backmaster-exporter-rclone unexpectedly contains AzCopy files" >&2
+    exit 1
+fi
+contents backmaster-exporter-azcopy | grep '/usr/lib/backmaster/exporters/azcopy/exporter$' >/dev/null
+contents backmaster-exporter-azcopy | grep '/usr/share/doc/backmaster-exporter-azcopy/exporters/azcopy.md$' >/dev/null
+contents backmaster-exporter-azcopy | grep '/azcopy.env.example$' >/dev/null
+contents backmaster-exporter-azcopy | grep '/azcopy.secrets.env.example$' >/dev/null
+if contents backmaster-exporter-azcopy | grep '/usr/bin/backmaster$' >/dev/null; then
+    echo "backmaster-exporter-azcopy unexpectedly contains the core CLI" >&2
+    exit 1
+fi
+if contents backmaster-exporter-azcopy | grep '/rclone' >/dev/null; then
+    echo "backmaster-exporter-azcopy unexpectedly contains rclone files" >&2
     exit 1
 fi
 

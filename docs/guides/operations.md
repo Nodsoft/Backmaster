@@ -1,7 +1,7 @@
 # Operations guide
 
 For exporter-specific catalogue, command, and retention behavior, see the
-[rclone exporter reference](../exporters/rclone.md).
+[rclone](../exporters/rclone.md) or [AzCopy](../exporters/azcopy.md) reference.
 
 ## Commands
 
@@ -66,8 +66,8 @@ fallback outcome, not a failure.
 
 `backmaster health` succeeds only when both the driver and exporter health
 checks succeed. The PostgreSQL driver checks the local client and server. The
-rclone exporter returns critical when no committed backup exists or the newest
-manifest is older than `HEALTHCHECK_MAX_AGE_SECONDS`.
+exporter returns critical when no committed backup exists or the newest manifest
+is older than `HEALTHCHECK_MAX_AGE_SECONDS`.
 
 The packaged health timer runs hourly. A oneshot unit's failure is visible to
 systemd and the journal, but production deployments should route it into the
@@ -98,14 +98,18 @@ that no Backmaster process owns it.
 
 ## Remote catalogue
 
-For the rclone exporter, only directories containing `manifest.json` count as
-completed. List them through the configured instance:
+For both bundled exporters, only directories containing `manifest.json` count
+as completed. Query the catalogue through the configured instance:
 
 ```bash
 sudo -u postgres backmaster exporter production-postgres latest-epoch
 ```
 
-For detailed inspection, load the exporter environment and use rclone directly:
+Use the selected exporter's component reference for direct storage inspection.
+Avoid direct deletion during routine operation; deletion belongs to exporter
+retention.
+
+For example, an rclone deployment can list backup directories with:
 
 ```bash
 set -a
@@ -115,12 +119,9 @@ set +a
 rclone lsf "$RCLONE_DESTINATION/basebackups" --dirs-only
 ```
 
-Use direct rclone deletion only during an approved repair. Normal deletion
-belongs to exporter retention.
-
 ## Retention
 
-Retention runs only after successful publication. The rclone exporter:
+Retention runs only after successful publication. Both bundled exporters:
 
 1. orders committed manifests newest first;
 2. always preserves the newest `MINIMUM_REDUNDANCY` backups;
@@ -142,6 +143,9 @@ sudo apt install --only-upgrade \
   backmaster-driver-postgres \
   backmaster-exporter-rclone
 ```
+
+Replace the exporter package with `backmaster-exporter-azcopy` on AzCopy
+instances.
 
 Then verify:
 

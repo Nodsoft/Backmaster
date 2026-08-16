@@ -8,6 +8,8 @@ driver produced the payload.
 ## Bundled exporters
 
 - [rclone](rclone.md) supports Azure Blob Storage and other rclone backends.
+- [AzCopy](azcopy.md) targets Azure Blob Storage with Microsoft's native
+  transfer utility and identity integrations.
 
 ## Contract
 
