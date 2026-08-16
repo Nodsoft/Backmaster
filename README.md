@@ -15,6 +15,7 @@ require changing the core.
 | Install Backmaster | [Installation](docs/guides/installation.md) |
 | Configure an instance | [Configuration reference](docs/guides/configuration.md) |
 | Protect and rotate credentials | [Secrets and credentials](docs/guides/secrets.md) |
+| Set up systemd services and schedules | [systemd units and timers](docs/guides/systemd.md) |
 | Back up PostgreSQL/Patroni | [PostgreSQL driver](docs/drivers/postgresql.md) |
 | Configure Azure Blob or another destination | [rclone exporter](docs/exporters/rclone.md) |
 | Use Microsoft's Azure-native transfer tool | [AzCopy exporter](docs/exporters/azcopy.md) |

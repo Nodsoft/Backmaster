@@ -346,28 +346,11 @@ the authoritative map from original database names to safe dump filenames.
 
 ## 6. Schedule one node
 
-Create a timer override with the desired UTC schedule:
-
-```bash
-sudo systemctl edit backmaster@production-postgres.timer
-```
-
-```ini
-[Timer]
-OnCalendar=
-OnCalendar=*-*-* 02:15:00 UTC
-Persistent=true
-RandomizedDelaySec=5m
-```
-
-Enable backup and health timers:
-
-```bash
-sudo systemctl enable --now \
-  backmaster@production-postgres.timer \
-  backmaster-health@production-postgres.timer
-systemctl list-timers 'backmaster*'
-```
+Backmaster does not package a universal backup timer. Follow the
+[systemd units and timers guide](../guides/systemd.md#create-a-backup-timer) to
+create an instance-specific timer with the desired schedule, validate its
+calendar, and enable both backup and health timers. Do this only after the
+commissioning backup and restore test above succeed.
 
 ## 7. Configure preferred/fallback nodes
 

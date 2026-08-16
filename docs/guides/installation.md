@@ -112,5 +112,6 @@ systemctl cat backmaster-health@.service
 ```
 
 The services are templates and are not useful until an instance configuration
-exists. Continue with [Configuration](configuration.md), then the guide for your
-driver.
+exists. A backup timer is intentionally not installed because its cadence is a
+deployment decision. Continue with [Configuration](configuration.md), the guide
+for your driver, and then [systemd units and timers](systemd.md).
