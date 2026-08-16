@@ -1,4 +1,4 @@
-# PostgreSQL and Patroni guide
+# PostgreSQL driver
 
 The PostgreSQL driver has two selectable modes:
 
@@ -36,7 +36,8 @@ fleet fallback, point each node to its local member port (for example Patroni on
 ## 2. Create the files
 
 Create an instance file, driver file, exporter file, and exporter secret as
-described in [Configuration](configuration.md). Start from the packaged examples:
+described in the [configuration guide](../guides/configuration.md). Start from
+the packaged examples:
 
 ```bash
 driver_docs=/usr/share/doc/backmaster-driver-postgres/examples
@@ -157,7 +158,7 @@ sudo -u postgres backmaster exporter production-postgres latest-epoch
 ```
 
 Run `backmaster health production-postgres` again. Then complete the
-[restore runbook](postgres-restore.md) on an isolated host.
+[restore runbook](../guides/postgres-restore.md) on an isolated host.
 
 For logical mode, inspect `payload/databases.json` in the exported backup. It is
 the authoritative map from original database names to safe dump filenames.

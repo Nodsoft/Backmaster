@@ -70,19 +70,26 @@ install -d -m 0755 \
     "$core_root/usr/lib/systemd/system" \
     "$core_root/usr/lib/sysusers.d" \
     "$core_root/usr/share/doc/$CORE_PACKAGE" \
+    "$core_root/usr/share/doc/$CORE_PACKAGE/drivers" \
+    "$core_root/usr/share/doc/$CORE_PACKAGE/exporters" \
+    "$core_root/usr/share/doc/$CORE_PACKAGE/guides" \
     "$core_root/etc/backmaster/instances.d" \
     "$core_root/etc/backmaster/drivers.d" \
     "$core_root/etc/backmaster/exporters.d"
 install -m 0755 "$ROOT/bin/backmaster" "$core_root/usr/bin/backmaster"
 install -m 0644 "$ROOT/systemd/"* "$core_root/usr/lib/systemd/system/"
 install -m 0644 "$ROOT/README.md" "$core_root/usr/share/doc/$CORE_PACKAGE/README.md"
+install -m 0644 "$ROOT/docs/drivers/index.md" \
+    "$core_root/usr/share/doc/$CORE_PACKAGE/drivers/index.md"
+install -m 0644 "$ROOT/docs/exporters/index.md" \
+    "$core_root/usr/share/doc/$CORE_PACKAGE/exporters/index.md"
 install -m 0644 \
-    "$ROOT/docs/installation.md" \
-    "$ROOT/docs/configuration.md" \
-    "$ROOT/docs/operations.md" \
-    "$ROOT/docs/troubleshooting.md" \
-    "$ROOT/docs/drivers.md" \
-    "$core_root/usr/share/doc/$CORE_PACKAGE/"
+    "$ROOT/docs/guides/index.md" \
+    "$ROOT/docs/guides/installation.md" \
+    "$ROOT/docs/guides/configuration.md" \
+    "$ROOT/docs/guides/operations.md" \
+    "$ROOT/docs/guides/troubleshooting.md" \
+    "$core_root/usr/share/doc/$CORE_PACKAGE/guides/"
 printf 'u backmaster - "Backmaster backup orchestrator" /var/lib/backmaster -\n' \
     >"$core_root/usr/lib/sysusers.d/backmaster.conf"
 sed -i "s|@BACKMASTER_VERSION@|${VERSION}|g" "$core_root/usr/bin/backmaster"
@@ -121,15 +128,17 @@ driver_root="$(package_root "$DRIVER_PACKAGE")"
 install -d -m 0755 \
     "$driver_root/DEBIAN" \
     "$driver_root/usr/lib/backmaster/drivers/postgres" \
+    "$driver_root/usr/share/doc/$DRIVER_PACKAGE/drivers" \
+    "$driver_root/usr/share/doc/$DRIVER_PACKAGE/guides" \
     "$driver_root/usr/share/doc/$DRIVER_PACKAGE/examples/config/drivers" \
     "$driver_root/usr/share/doc/$DRIVER_PACKAGE/examples/config/instances" \
     "$driver_root/usr/share/doc/$DRIVER_PACKAGE/examples/deploy"
 install -m 0755 "$ROOT/drivers/postgres/driver" \
     "$driver_root/usr/lib/backmaster/drivers/postgres/driver"
-install -m 0644 "$ROOT/docs/postgres-restore.md" \
-    "$driver_root/usr/share/doc/$DRIVER_PACKAGE/postgres-restore.md"
-install -m 0644 "$ROOT/docs/postgresql.md" \
-    "$driver_root/usr/share/doc/$DRIVER_PACKAGE/postgresql.md"
+install -m 0644 "$ROOT/docs/guides/postgres-restore.md" \
+    "$driver_root/usr/share/doc/$DRIVER_PACKAGE/guides/postgres-restore.md"
+install -m 0644 "$ROOT/docs/drivers/postgresql.md" \
+    "$driver_root/usr/share/doc/$DRIVER_PACKAGE/drivers/postgresql.md"
 cp -a "$ROOT/config/drivers/." \
     "$driver_root/usr/share/doc/$DRIVER_PACKAGE/examples/config/drivers/"
 cp -a "$ROOT/config/instances/." \
@@ -147,9 +156,12 @@ exporter_root="$(package_root "$EXPORTER_PACKAGE")"
 install -d -m 0755 \
     "$exporter_root/DEBIAN" \
     "$exporter_root/usr/lib/backmaster/exporters/rclone" \
+    "$exporter_root/usr/share/doc/$EXPORTER_PACKAGE/exporters" \
     "$exporter_root/usr/share/doc/$EXPORTER_PACKAGE/examples/config/exporters"
 install -m 0755 "$ROOT/exporters/rclone/exporter" \
     "$exporter_root/usr/lib/backmaster/exporters/rclone/exporter"
+install -m 0644 "$ROOT/docs/exporters/rclone.md" \
+    "$exporter_root/usr/share/doc/$EXPORTER_PACKAGE/exporters/rclone.md"
 cp -a "$ROOT/config/exporters/." \
     "$exporter_root/usr/share/doc/$EXPORTER_PACKAGE/examples/config/exporters/"
 write_control "$EXPORTER_PACKAGE" \

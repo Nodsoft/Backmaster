@@ -12,13 +12,15 @@ storage service does not require changing the core.
 
 | If you want to… | Read |
 | --- | --- |
-| Install Backmaster | [Installation](docs/installation.md) |
-| Configure an instance | [Configuration reference](docs/configuration.md) |
-| Back up PostgreSQL/Patroni | [PostgreSQL guide](docs/postgresql.md) |
-| Schedule, monitor, and maintain backups | [Operations guide](docs/operations.md) |
-| Restore PostgreSQL or perform PITR | [PostgreSQL restore runbook](docs/postgres-restore.md) |
-| Diagnose a failure | [Troubleshooting](docs/troubleshooting.md) |
-| Write a driver or exporter | [Extension contract](docs/drivers.md) |
+| Install Backmaster | [Installation](docs/guides/installation.md) |
+| Configure an instance | [Configuration reference](docs/guides/configuration.md) |
+| Back up PostgreSQL/Patroni | [PostgreSQL driver](docs/drivers/postgresql.md) |
+| Configure Azure Blob or another destination | [rclone exporter](docs/exporters/rclone.md) |
+| Schedule, monitor, and maintain backups | [Operations guide](docs/guides/operations.md) |
+| Restore PostgreSQL or perform PITR | [PostgreSQL restore runbook](docs/guides/postgres-restore.md) |
+| Diagnose a failure | [Troubleshooting](docs/guides/troubleshooting.md) |
+| Write a driver | [Driver contract](docs/drivers/index.md) |
+| Write an exporter | [Exporter contract](docs/exporters/index.md) |
 
 ## Five-minute overview
 

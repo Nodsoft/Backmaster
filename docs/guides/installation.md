@@ -60,7 +60,7 @@ convenience metapackage.
 | `/usr/lib/systemd/system/` | Reusable service and health units |
 | `/etc/backmaster/` | Administrator-owned configuration |
 | `/var/lib/backmaster/INSTANCE/` | Local staging state |
-| `/usr/share/doc/backmaster-*/examples/` | Packaged examples |
+| `/usr/share/doc/backmaster-*/` | Component documentation and examples |
 
 The package creates a generic `backmaster` system user. A source-specific
 systemd drop-in may replace it; the PostgreSQL example runs both backup and
