@@ -29,13 +29,25 @@ done
 [[ "$(field backmaster-driver-postgres Replaces)" == "backmaster (<< $version)" ]]
 [[ "$(field backmaster-exporter-rclone Replaces)" == "backmaster (<< $version)" ]]
 
-contents backmaster-core | grep -q '/usr/bin/backmaster$'
-! contents backmaster-core | grep -q '/usr/lib/backmaster/drivers/postgres/driver$'
-! contents backmaster-core | grep -q '/usr/lib/backmaster/exporters/rclone/exporter$'
-contents backmaster-driver-postgres | grep -q '/usr/lib/backmaster/drivers/postgres/driver$'
-! contents backmaster-driver-postgres | grep -q '/usr/bin/backmaster$'
-contents backmaster-exporter-rclone | grep -q '/usr/lib/backmaster/exporters/rclone/exporter$'
-! contents backmaster-exporter-rclone | grep -q '/usr/bin/backmaster$'
+contents backmaster-core | grep '/usr/bin/backmaster$' >/dev/null
+if contents backmaster-core | grep '/usr/lib/backmaster/drivers/postgres/driver$' >/dev/null; then
+    echo "backmaster-core unexpectedly contains the PostgreSQL driver" >&2
+    exit 1
+fi
+if contents backmaster-core | grep '/usr/lib/backmaster/exporters/rclone/exporter$' >/dev/null; then
+    echo "backmaster-core unexpectedly contains the rclone exporter" >&2
+    exit 1
+fi
+contents backmaster-driver-postgres | grep '/usr/lib/backmaster/drivers/postgres/driver$' >/dev/null
+if contents backmaster-driver-postgres | grep '/usr/bin/backmaster$' >/dev/null; then
+    echo "backmaster-driver-postgres unexpectedly contains the core CLI" >&2
+    exit 1
+fi
+contents backmaster-exporter-rclone | grep '/usr/lib/backmaster/exporters/rclone/exporter$' >/dev/null
+if contents backmaster-exporter-rclone | grep '/usr/bin/backmaster$' >/dev/null; then
+    echo "backmaster-exporter-rclone unexpectedly contains the core CLI" >&2
+    exit 1
+fi
 
 extract_root="$temporary/extracted"
 mkdir -p "$extract_root"
