@@ -8,6 +8,7 @@ Task-oriented Backmaster documentation:
 - [systemd units and timers](systemd.md)
 - [Operations](operations.md)
 - [PostgreSQL restore and PITR](postgres-restore.md)
+- [MongoDB restore](mongodb-restore.md)
 - [Troubleshooting](troubleshooting.md)
 
 Component behavior and extension contracts are documented separately under

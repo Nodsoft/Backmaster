@@ -21,6 +21,7 @@ jobs:
       - run: bash tests/staging.bash
       - run: bash tests/archive-formats.bash
       - run: bash tests/postgres-driver.bash
+      - run: bash tests/mongodb-driver.bash
       - run: bash tests/rclone-exporter.bash
       - run: bash tests/azcopy-exporter.bash
       - run: bash tests/debian-packages.bash

@@ -110,6 +110,37 @@ Then invoke the archive path on a disposable copy of a WAL file if your
 operating procedure permits it. Check exporter connectivity, staging space, and
 the `archive_command` path. The Debian package installs `/usr/bin/backmaster`.
 
+## MongoDB driver
+
+### `could not query MongoDB deployment`
+
+Run `mongosh` as the `backmaster` service identity with the configured URI,
+authentication source, TLS files, and mechanism. Confirm DNS/SRV resolution,
+certificate trust, firewall access, and that the role can run `listDatabases`.
+Do not paste a credential-bearing URI into diagnostics.
+
+### `included database does not exist or is not authorized`
+
+Every non-empty include line must exactly match a database returned to the
+backup role. A missing name may be a typo or a privilege gap. Backmaster fails
+instead of publishing an incomplete selection. System databases additionally
+require `MONGODB_INCLUDE_SYSTEM_DATABASES=true` to survive final filtering.
+
+### `mongodump failed for database`
+
+The role must read every selected collection and its metadata. Enabling
+`MONGODB_DUMP_DB_USERS_AND_ROLES` needs additional user/role privileges.
+Queryable Encryption collections cannot be dumped with `mongodump`. Check that
+MongoDB Database Tools are compatible with the source and reproduce the failing
+database dump as the service identity without exposing its password.
+
+### MongoDB dumps disagree across databases
+
+Per-database dumps run sequentially and do not form one deployment-wide
+snapshot. The driver intentionally does not expose `--oplog`, because MongoDB
+does not allow it with `--db`. Use a deployment snapshot or MongoDB backup
+system designed for PITR when cross-database consistency is required.
+
 ## Rclone exporter
 
 See the [rclone exporter reference](../exporters/rclone.md) for its complete
@@ -222,7 +253,8 @@ Do not include secret contents. Useful output is:
 
 ```bash
 backmaster --version
-dpkg-query -W 'backmaster*' 'azcopy' 'rclone' 'postgresql-client*'
+dpkg-query -W 'backmaster*' 'azcopy' 'rclone' 'postgresql-client*' \
+  'mongodb-database-tools' 'mongodb-mongosh'
 systemctl cat backmaster@production-postgres.service
 systemctl cat backmaster@production-postgres.timer
 journalctl -u backmaster@production-postgres.service -n 200 --no-pager
