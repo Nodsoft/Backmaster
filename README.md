@@ -1,53 +1,101 @@
 # Backmaster
 
-Backmaster is a fleet-oriented backup orchestrator with three independent
-layers:
+Backmaster is a modular, fleet-oriented backup orchestrator. A **driver** creates
+a consistent local backup, an **exporter** publishes it, and the core coordinates
+naming, staging, distributed locking, fallback, retention, and health checks.
 
-| Layer | Owns | Does not own |
-| --- | --- | --- |
-| Core | scheduling, Axon/Myelin fallback, Consul locking, naming, staging | database consistency or cloud APIs |
-| Driver | consistent local backup production | credentials, upload, catalogue, retention |
-| Exporter | durable publication, remote catalogue, retention | PostgreSQL, MongoDB, mail semantics |
+PostgreSQL and rclone are the first bundled modules. The rclone exporter works
+with Azure Blob Storage and other rclone backends; adding MongoDB, mail, or a new
+storage service does not require changing the core.
 
-PostgreSQL is the first driver. The bundled rclone exporter targets Azure Blob
-today, but can target another rclone backend through configuration or be
-replaced with another exporter.
+## Start here
 
-## Staging cycle
+| If you want to… | Read |
+| --- | --- |
+| Install Backmaster | [Installation](docs/installation.md) |
+| Configure an instance | [Configuration reference](docs/configuration.md) |
+| Back up PostgreSQL/Patroni | [PostgreSQL guide](docs/postgresql.md) |
+| Schedule, monitor, and maintain backups | [Operations guide](docs/operations.md) |
+| Restore PostgreSQL or perform PITR | [PostgreSQL restore runbook](docs/postgres-restore.md) |
+| Diagnose a failure | [Troubleshooting](docs/troubleshooting.md) |
+| Write a driver or exporter | [Extension contract](docs/drivers.md) |
 
-Backmaster builds each backup below `STAGING_ROOT/INSTANCE` as a partial stage.
-The driver writes only `payload/`; the core adds checksums and a JSON manifest,
-then promotes the directory to `*.ready`. The exporter uploads the manifest
-last as the remote commit marker. Local data is deleted only after publication
-succeeds.
+## Five-minute overview
 
-A failed export leaves the ready stage in place. The next run resumes that
-export before creating another backup. This bounds normal local usage to one
-compressed backup plus small metadata and avoids `/mnt/data` entirely.
+Install the complete bundled flow after configuring the Nodsoft APT repository:
+
+```bash
+sudo apt update
+sudo apt install backmaster
+```
+
+The `backmaster` metapackage installs:
+
+| Package | Purpose |
+| --- | --- |
+| `backmaster-core` | CLI, lifecycle, staging, and systemd units |
+| `backmaster-driver-postgres` | PostgreSQL base backup and WAL driver |
+| `backmaster-exporter-rclone` | Azure Blob and other rclone destinations |
+| `backmaster` | Convenience metapackage for all three components |
+
+Create three configuration files for an instance named `production-postgres`:
+
+```text
+/etc/backmaster/instances.d/production-postgres.env
+/etc/backmaster/drivers/postgres/production-postgres.env
+/etc/backmaster/exporters/rclone/production-postgres.env
+```
+
+Put storage credentials in a separate file:
+
+```text
+/etc/backmaster/secrets/production-postgres-exporter.env
+```
+
+Then validate both ends and make an intentional first backup:
+
+```bash
+sudo -u postgres backmaster connectivity production-postgres
+sudo -u postgres backmaster run production-postgres --force
+sudo -u postgres backmaster health production-postgres
+```
+
+Do not enable an unattended timer until those commands succeed and an isolated
+restore drill has passed.
+
+## How a backup moves
 
 ```mermaid
 flowchart TD
-    A["Core lock + name"] --> B["Driver prepares local payload"]
+    A["Core acquires Consul lock"] --> B["Driver creates local payload"]
     B --> C["Core seals ready stage"]
     C --> D["Exporter publishes payload"]
     D --> E["Manifest commits backup"]
-    E --> F["Core cleans stage + retains"]
+    E --> F["Core cleans local stage"]
 ```
 
-## PostgreSQL flow
+The driver can only write to `payload/`. The core adds checksums and a JSON
+manifest, then atomically promotes the stage to `*.ready`. The exporter uploads
+the manifest last, making it the remote commit marker. If export fails, the
+ready stage stays local and is resumed before any new backup is created.
 
-The PostgreSQL driver uses `pg_basebackup` against node-local port 5431. It
-creates compressed tar archives with streamed WAL, so every base backup is
-self-contained. Continuous WAL is archived through the exporter's generic
-object interface for point-in-time recovery; the driver contains no Azure or
-rclone configuration.
+By default, stages live below `/var/lib/backmaster/INSTANCE`; Backmaster has no
+dependency on `/mnt/data`.
 
-Axon attempts first, Myelin uses a delayed timer, remote manifest freshness
-decides fallback, and the Consul lock prevents overlap. PostgreSQL 18 supports
-base backups from a suitably configured standby, so both nodes can produce the
-same flow.
+## Fleet fallback
 
-## Naming
+Install the same instance on every node capable of producing it. Give all nodes
+the same `INSTANCE_NAME`, destination, freshness threshold, and Consul lock key,
+but a distinct `NODE_NAME`.
+
+A preferred node runs first. A fallback node runs later and consults the shared
+remote catalogue. If a fresh completed backup already exists, it exits without
+creating another one. If not, it acquires the same Consul lock and proceeds.
+The included Axon/Myelin examples schedule attempts at 02:15 and 03:15 UTC.
+
+## Backup names
+
+All names use UTC:
 
 | `BACKUP_NAME_MODE` | Example |
 | --- | --- |
@@ -55,60 +103,30 @@ same flow.
 | `daily-serial` | `2026-08-02-001` |
 | `daily-time` | `2026-08-02T151423Z` |
 
-`BACKUP_NAME_SUFFIX_MODE` is `none`, `hostname`, or `custom`. A custom suffix
-uses `BACKUP_NAME_SUFFIX_VALUE`. Naming is UTC and serial lookup belongs to the
-exporter catalogue, not the data driver.
+`BACKUP_NAME_SUFFIX_MODE` accepts `none`, `hostname`, or `custom`. With a custom
+suffix of `axon`, a serial name becomes `2026-08-02-001-axon`. Serial allocation
+comes from the shared exporter catalogue while the Consul lock is held.
 
-## Layout
+## CLI
 
 ```text
-bin/backmaster                 generic lifecycle and staging
-drivers/postgres/driver       local PostgreSQL archive producer
-exporters/rclone/exporter     remote storage and retention
-config/                       instance, driver, and exporter examples
-systemd/                      reusable service/health templates
-deploy/{axon,myelin}/         staggered timer examples
-docs/                         contracts and recovery runbook
+backmaster run INSTANCE [--force]
+backmaster health INSTANCE
+backmaster connectivity INSTANCE
+backmaster driver INSTANCE VERB [ARG...]
+backmaster exporter INSTANCE VERB [ARG...]
+backmaster --version
 ```
 
-The Debian packages separate the core, drivers, and exporters. This keeps
-source-specific and destination-specific dependencies off systems that do not
-use them:
+`run` skips creation when the exporter reports a fresh completed backup.
+`--force` bypasses only that freshness decision; it does not bypass locking,
+staging safety, or retention.
 
-| Package | Contents |
-| --- | --- |
-| `backmaster-core` | CLI, lifecycle, staging, systemd templates |
-| `backmaster-driver-postgres` | PostgreSQL driver, examples, restore runbook |
-| `backmaster-exporter-rclone` | rclone exporter and configuration examples |
-| `backmaster` | Convenience metapackage installing all of the above |
+## Safety model
 
-Component packages require the exact same version of `backmaster-core`, so a
-repository upgrade cannot silently combine incompatible contracts. The
-PostgreSQL systemd drop-in runs the flow as `postgres`; exporter secrets should
-be `0640 root:postgres`.
-
-```bash
-curl -fsSL https://packages.nodsoft.net/install.sh | sudo bash
-sudo apt install backmaster
-```
-
-For a minimal or custom flow, install only the required components:
-
-```bash
-sudo apt install backmaster-core backmaster-driver-postgres backmaster-exporter-rclone
-```
-
-Release and branch builds also publish a downloadable `.deb` workflow
-artifact. A local build produces all four packages with
-`packaging/build-deb.sh`; set `VERSION` and `ARCH` to override the detected
-values.
-
-```bash
-sudo -u postgres backmaster connectivity nsys-postgres
-sudo -u postgres backmaster run nsys-postgres --force
-sudo -u postgres backmaster health nsys-postgres
-```
-
-See [driver and exporter development](docs/drivers.md) and the
-[PostgreSQL restore runbook](docs/postgres-restore.md). Do not consider a flow
-production-ready until an isolated restore drill passes.
+- Credentials stay outside instance, driver, and exporter policy files.
+- A remote backup is complete only when its `manifest.json` exists.
+- Local staging is deleted only after successful publication.
+- Retention always preserves `MINIMUM_REDUNDANCY` newest completed backups.
+- PostgreSQL WAL archival is separate from the daily base-backup cycle.
+- Backups are not proven until restore drills are automated and monitored.

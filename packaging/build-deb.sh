@@ -76,7 +76,13 @@ install -d -m 0755 \
 install -m 0755 "$ROOT/bin/backmaster" "$core_root/usr/bin/backmaster"
 install -m 0644 "$ROOT/systemd/"* "$core_root/usr/lib/systemd/system/"
 install -m 0644 "$ROOT/README.md" "$core_root/usr/share/doc/$CORE_PACKAGE/README.md"
-install -m 0644 "$ROOT/docs/drivers.md" "$core_root/usr/share/doc/$CORE_PACKAGE/drivers.md"
+install -m 0644 \
+    "$ROOT/docs/installation.md" \
+    "$ROOT/docs/configuration.md" \
+    "$ROOT/docs/operations.md" \
+    "$ROOT/docs/troubleshooting.md" \
+    "$ROOT/docs/drivers.md" \
+    "$core_root/usr/share/doc/$CORE_PACKAGE/"
 printf 'u backmaster - "Backmaster backup orchestrator" /var/lib/backmaster -\n' \
     >"$core_root/usr/lib/sysusers.d/backmaster.conf"
 sed -i "s|@BACKMASTER_VERSION@|${VERSION}|g" "$core_root/usr/bin/backmaster"
@@ -122,6 +128,8 @@ install -m 0755 "$ROOT/drivers/postgres/driver" \
     "$driver_root/usr/lib/backmaster/drivers/postgres/driver"
 install -m 0644 "$ROOT/docs/postgres-restore.md" \
     "$driver_root/usr/share/doc/$DRIVER_PACKAGE/postgres-restore.md"
+install -m 0644 "$ROOT/docs/postgresql.md" \
+    "$driver_root/usr/share/doc/$DRIVER_PACKAGE/postgresql.md"
 cp -a "$ROOT/config/drivers/." \
     "$driver_root/usr/share/doc/$DRIVER_PACKAGE/examples/config/drivers/"
 cp -a "$ROOT/config/instances/." \
