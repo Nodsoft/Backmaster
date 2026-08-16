@@ -19,27 +19,35 @@ jobs:
         uses: dotnet/nbgv@f088059084cb5d872e9d1a994433ca6440c2bf72 # v0.4.2
         id: nbgv
 
-      - name: Build Debian package
+      - name: Build Debian packages
         env:
           VERSION: ${{ steps.nbgv.outputs.semver2 }}
           OUT_DIR: dist
           ARCH: all
         run: ./packaging/build-deb.sh
 
-      - name: Inspect Debian package
+      - name: Inspect Debian packages
         run: |
           set -euo pipefail
-          dpkg-deb --info dist/*.deb
-          dpkg-deb --contents dist/*.deb
+          mapfile -t packages < <(find dist -maxdepth 1 -type f -name '*.deb' -print | sort)
+          test "${#packages[@]}" -eq 4
+          for package in "${packages[@]}"; do
+            dpkg-deb --info "$package"
+            dpkg-deb --contents "$package"
+          done
           package_root="$(mktemp -d)"
-          dpkg-deb --extract dist/*.deb "$package_root"
+          for package in "${packages[@]}"; do
+            dpkg-deb --extract "$package" "$package_root"
+          done
           test "$("$package_root/usr/bin/backmaster" --version)" = \
             "backmaster ${{ steps.nbgv.outputs.semver2 }}"
+          test -x "$package_root/usr/lib/backmaster/drivers/postgres/driver"
+          test -x "$package_root/usr/lib/backmaster/exporters/rclone/exporter"
 
       - name: Upload package artifact
         uses: actions/upload-artifact@v4
         with:
-          name: backmaster-deb
+          name: backmaster-debs
           path: dist/*.deb
           if-no-files-found: error
           retention-days: 14
