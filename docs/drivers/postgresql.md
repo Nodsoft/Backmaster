@@ -14,6 +14,152 @@ destination roots if you want both modes: for example `postgres-physical` and
 `postgres-logical`. This gives each flow independent freshness, naming,
 retention, monitoring, and restore history.
 
+## Configuration reference
+
+The instance file selects the driver policy with `DRIVER_CONFIG` and may select
+a protected credential file with `DRIVER_SECRET_FILE`. The driver loads the
+policy first and the secret file second, so the secret file wins when both set
+the same variable. Both files are sourced as Bash environment files; see
+[Secrets and credentials](../guides/secrets.md) for syntax and permissions.
+
+These are all settings interpreted directly by the PostgreSQL driver:
+
+<!-- markdownlint-disable MD013 -->
+| Setting | Mode | Required/default | Passed to or used for |
+| --- | --- | --- | --- |
+| `DRIVER_CONFIG` | both | required | Readable driver policy file selected by the instance |
+| `DRIVER_SECRET_FILE` | both | empty | Optional protected file loaded after the policy file |
+| `PGHOST` | both | required | `--host` for every PostgreSQL client; use a socket directory or host name |
+| `PGPORT` | both | required | `--port` for every PostgreSQL client |
+| `PGUSER` | both | required | `--username` for every PostgreSQL client |
+| `PGDATABASE` | both | `postgres` | Readiness database; also logical discovery and `pg_dumpall --globals-only` connection database |
+| `PG_BACKUP_MODE` | both | `physical` | Exactly `physical` or `logical` |
+| `PG_COMPRESSION` | physical | `client-gzip:level=6` | `pg_basebackup --compress`; accepted syntax depends on the installed client version |
+| `PG_CHECKPOINT` | physical | `fast` | `pg_basebackup --checkpoint`; PostgreSQL accepts `fast` or `spread` |
+| `PG_LOGICAL_COMPRESSION` | logical | `6` | `pg_dump --compress` for every custom-format database archive; accepted syntax depends on the installed client version |
+| `PG_LOGICAL_GLOBALS_GZIP_LEVEL` | logical | `6` | `gzip` level for `globals.sql.gz`; use `1` through `9` |
+| `PG_DATABASE_INCLUDE` | logical | empty | Exact, newline-delimited database names; empty selects every discovered database |
+| `PG_DATABASE_EXCLUDE` | logical | empty | Exact, newline-delimited database names removed after inclusion |
+<!-- markdownlint-enable MD013 -->
+
+Backmaster deliberately passes compression values to the installed PostgreSQL
+tools instead of maintaining a second version-specific parser. An invalid or
+unsupported value therefore fails in `pg_basebackup` or `pg_dump`. The package
+uses tar format, streamed WAL, SHA-256 manifests, and a backup label in physical
+mode; those choices are fixed and have no Backmaster setting. Logical archives
+are always custom format and are produced sequentially.
+
+The core also supplies internal lifecycle context: `BACKUP_NAME` becomes the
+physical backup label, while `INSTANCE_NAME`, `STAGING_ROOT`, and
+`EXPORTER_EXEC` support WAL temporary files and exporter object transport.
+Administrators configure their source values in the instance file; they should
+not override the resolved runtime values in a driver policy or secret file.
+
+### PostgreSQL client environment
+
+All assignments in the driver policy and secret files are exported. The
+PostgreSQL clients therefore also honor their supported libpq environment
+variables. `PGHOST`, `PGPORT`, `PGUSER`, and the relevant database name are
+always passed explicitly by the driver; a service definition cannot replace
+those required settings. Service definitions and environment variables may
+supply connection parameters the driver does not set explicitly.
+
+<!-- markdownlint-disable MD013 -->
+| Purpose | Pass-through variables |
+| --- | --- |
+| Password and service files | `PGPASSFILE`, `PGPASSWORD`, `PGSERVICE`, `PGSERVICEFILE`, `PGSYSCONFDIR` |
+| Routing and connection policy | `PGHOSTADDR`, `PGCONNECT_TIMEOUT`, `PGTARGETSESSIONATTRS`, `PGLOADBALANCEHOSTS`, `PGOPTIONS`, `PGAPPNAME` |
+| Authentication policy | `PGREQUIREAUTH`, `PGREQUIREPEER`, `PGCHANNELBINDING` |
+| TLS | `PGSSLMODE`, `PGSSLNEGOTIATION`, `PGSSLCERT`, `PGSSLKEY`, `PGSSLCERTMODE`, `PGSSLROOTCERT`, `PGSSLCRL`, `PGSSLCRLDIR`, `PGSSLSNI`, `PGSSLMINPROTOCOLVERSION`, `PGSSLMAXPROTOCOLVERSION` |
+| GSSAPI | `PGGSSENCMODE`, `PGKRBSRVNAME`, `PGGSSLIB`, `PGGSSDELEGATION` |
+| Protocol and encoding | `PGMINPROTOCOLVERSION`, `PGMAXPROTOCOLVERSION`, `PGCLIENTENCODING` |
+| Session defaults | `PGDATESTYLE`, `PGTZ`, `PGGEQO` |
+<!-- markdownlint-enable MD013 -->
+
+The deprecated `PGREQUIRESSL` and `PGSSLCOMPRESSION` variables are also passed
+through, but new configurations should use `PGSSLMODE` and current TLS
+settings. PostgreSQL may add variables over time; the installed client's
+[libpq environment-variable reference](https://www.postgresql.org/docs/current/libpq-envars.html)
+is authoritative for values and version availability.
+
+Prefer peer authentication for a local socket or `PGPASSFILE` for password
+authentication. PostgreSQL discourages `PGPASSWORD` because process
+environments can be observable. Certificate/key/passfile paths must be
+readable by the systemd service identity, and PostgreSQL enforces restrictive
+permissions on password and private-key files.
+
+### Database selection
+
+Logical discovery runs this equivalent query through `psql`, ordered by name:
+
+```sql
+SELECT datname
+FROM pg_database
+WHERE datallowconn AND NOT datistemplate
+ORDER BY datname;
+```
+
+Each non-empty include entry must occur in that result or the run fails. The
+driver then applies the include list, followed by the exclude list; exclusions
+win. Blank lines are ignored, but all other characters—including leading or
+trailing spaces—are significant. If no database remains, the run fails before
+publishing a globals-only backup.
+
+Use Bash ANSI-C quoting for multiple names:
+
+```bash
+PG_DATABASE_INCLUDE=$'backmaster\nmatrix\nsynapse'
+PG_DATABASE_EXCLUDE=$'scratch\ntest'
+```
+
+Leave both values empty to dump every connectable, non-template database.
+
+### Commands and dependencies
+
+Invoke driver verbs through `backmaster driver INSTANCE ...`; direct execution
+does not load the instance environment. `prepare` is an internal lifecycle verb
+and expects an existing, empty payload directory created by the core.
+
+<!-- markdownlint-disable MD013 -->
+| Invocation | Arguments and behavior | External commands |
+| --- | --- | --- |
+| `driver INSTANCE connectivitycheck` | Checks required tools and local source readiness | `pg_isready`, plus mode-specific tools below |
+| `driver INSTANCE healthcheck` | Runs connectivity and prints the selected backup mode | same as connectivity |
+| `driver INSTANCE prepare PAYLOAD_DIR` | Creates the selected payload; normally called only by `backmaster run` | physical: `pg_basebackup`; logical: `psql`, `pg_dump`, `pg_dumpall`, `jq`, `gzip`, `sha256sum` |
+| `driver INSTANCE wal-archive WAL_PATH` | Gzip-compresses and exports one WAL segment; physical mode only | `gzip`, exporter `put-file` |
+| `driver INSTANCE wal-restore WAL_NAME DESTINATION` | Downloads and decompresses one WAL segment; physical mode only | `gzip`, exporter `get-file` |
+<!-- markdownlint-enable MD013 -->
+
+`connectivitycheck` verifies mode-specific PostgreSQL commands and source
+readiness without producing a backup. `healthcheck` performs that same local
+check and reports the selected mode. It does not prove that a dump can read
+every object; the first intentional backup and a restore drill remain required.
+
+### Payload format
+
+Physical mode writes PostgreSQL's tar-format base-backup files directly below
+`payload/`; names and extensions depend on server tablespaces and
+`PG_COMPRESSION`. The streamed WAL needed to make that base backup internally
+consistent is included by `pg_basebackup`. Continuous WAL exported separately
+under `objects/wal/` is what extends recovery beyond the base backup.
+
+Logical mode produces:
+
+```text
+payload/
+├── globals.sql.gz
+├── databases.json
+└── databases/
+    └── SHA256_OF_DATABASE_NAME.dump
+```
+
+`globals.sql.gz` is the plain SQL output of `pg_dumpall --globals-only`.
+`databases.json` records the original database name and relative custom-archive
+path for every selected database. The SHA-256 filenames prevent database names
+from becoming filesystem paths; do not infer names from those files without
+the index. The core adds `checksums.sha256` and `manifest.json` outside
+`payload/` after the driver succeeds.
+
 ## 1. Prepare PostgreSQL
 
 The backup role must be able to connect to PostgreSQL. Physical mode requires
@@ -59,8 +205,8 @@ sudo install -m 0640 -o root -g postgres \
 
 Edit all four files. Ensure `INSTANCE_NAME=production-postgres` matches the
 instance filename and `NODE_NAME` is correct on each machine. In the driver
-file, select `PG_BACKUP_MODE=physical` or `PG_BACKUP_MODE=logical`. Logical mode
-accepts exact newline-delimited filters:
+file, select `PG_BACKUP_MODE=physical` or `PG_BACKUP_MODE=logical`. The complete
+option reference is above; a logical configuration might use:
 
 ```bash
 PG_BACKUP_MODE=logical
@@ -69,9 +215,8 @@ PG_DATABASE_INCLUDE=$'backmaster\nmatrix\nsynapse'
 PG_DATABASE_EXCLUDE=$'scratch\ntest'
 ```
 
-An empty include list selects every connectable non-template database.
-Exclusions take precedence. Backmaster always includes `globals.sql.gz` for
-roles and tablespaces, even when database filtering is used.
+Backmaster always includes `globals.sql.gz` for roles and tablespaces, even when
+database filtering is used.
 
 ## 3. Install the service identity drop-ins
 

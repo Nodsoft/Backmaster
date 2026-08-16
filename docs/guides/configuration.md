@@ -90,22 +90,6 @@ PG_LOGICAL_GLOBALS_GZIP_LEVEL=6
 # PG_DATABASE_EXCLUDE=$'scratch\ntest'
 ```
 
-<!-- markdownlint-disable MD013 -->
-| Setting | Mode | Default | Meaning |
-| --- | --- | --- | --- |
-| `PGHOST` | both | required | Unix socket directory or PostgreSQL host |
-| `PGPORT` | both | required | PostgreSQL port |
-| `PGUSER` | both | required | Backup role |
-| `PG_BACKUP_MODE` | both | `physical` | `physical` or `logical` |
-| `PGDATABASE` | both | `postgres` | Maintenance database used by readiness and logical discovery |
-| `PG_COMPRESSION` | physical | `client-gzip:level=6` | `pg_basebackup --compress` value |
-| `PG_CHECKPOINT` | physical | `fast` | `fast` or `spread` |
-| `PG_LOGICAL_COMPRESSION` | logical | `6` | `pg_dump --compress` value |
-| `PG_LOGICAL_GLOBALS_GZIP_LEVEL` | logical | `6` | Compression level for `globals.sql.gz` |
-| `PG_DATABASE_INCLUDE` | logical | empty | Newline-delimited exact database names; empty means all |
-| `PG_DATABASE_EXCLUDE` | logical | empty | Newline-delimited exact database names to omit |
-<!-- markdownlint-enable MD013 -->
-
 Logical mode discovers every connectable, non-template database. If an include
 list is present, every named database must exist; a typo fails the backup rather
 than silently creating an incomplete set. Exclusions are applied after includes
@@ -120,8 +104,10 @@ PG_DATABASE_INCLUDE=$'backmaster\nmatrix\nsynapse'
 PG_DATABASE_EXCLUDE=$'scratch\ntest'
 ```
 
-No storage credentials belong in the driver file. For more detail, see the
-[PostgreSQL driver reference](../drivers/postgresql.md).
+No storage credentials belong in the driver file. The
+[PostgreSQL driver reference](../drivers/postgresql.md#configuration-reference)
+is the canonical list of every driver setting, PostgreSQL/libpq pass-through
+variable, default, validation rule, and mode-specific dependency.
 
 ## Rclone exporter file
 
@@ -134,16 +120,6 @@ MINIMUM_REDUNDANCY=2
 HEALTHCHECK_MAX_AGE_SECONDS=129600
 WAL_RETENTION_DAYS=15
 ```
-
-<!-- markdownlint-disable MD013 -->
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| `RCLONE_DESTINATION` | required | `remote:path` root owned by this instance |
-| `RETENTION_DAYS` | `14` | Retention days; `unlimited` or `none` disables base-backup cleanup |
-| `MINIMUM_REDUNDANCY` | `2` | Minimum newest committed-backup count protected from cleanup |
-| `HEALTHCHECK_MAX_AGE_SECONDS` | `129600` | Critical remote age |
-| `WAL_RETENTION_DAYS` | `15` | WAL retention days; `unlimited` or `none` disables WAL cleanup |
-<!-- markdownlint-enable MD013 -->
 
 Backup retention removes an item only when it is both older than
 `RETENTION_DAYS` and outside the newest `MINIMUM_REDUNDANCY` items. Choose WAL
@@ -188,8 +164,9 @@ sudo chmod 0640 \
 
 Never commit secret files. Verify that the chosen rclone authentication method
 can list, read, write, and delete within only the intended destination. The
-[rclone exporter reference](../exporters/rclone.md) documents other backends,
-commands, remote layout, and retention behavior.
+[rclone exporter reference](../exporters/rclone.md#configuration) is the
+canonical setting list and also documents other backends, commands, remote
+layout, and retention behavior.
 
 ## AzCopy exporter
 
@@ -207,8 +184,8 @@ WAL_RETENTION_DAYS=15
 Keep `AZCOPY_AUTO_LOGIN_TYPE` and service-principal or SAS values in the
 protected exporter secret file. Prefer `AZCOPY_AUTO_LOGIN_TYPE=MSI` on Azure
 hosts. The [AzCopy exporter reference](../exporters/azcopy.md) documents all
-supported authentication patterns, catalogue behavior, commands, and
-retention.
+supported settings, authentication patterns, catalogue behavior, commands,
+and retention.
 
 ## Remote layout
 

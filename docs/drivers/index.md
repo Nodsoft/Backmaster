@@ -9,6 +9,12 @@ storage or credentials.
 - [PostgreSQL](postgresql.md) supports physical base backups with WAL and
   filtered logical dumps.
 
+Each bundled driver page is the canonical reference for that component's
+settings, defaults, accepted values, credentials, output, dependencies, and
+operational constraints. Task-oriented examples may appear in the guides, but
+must link back to the component reference instead of maintaining a second
+option table.
+
 ## Lifecycle
 
 1. The core acquires the instance's Consul lock and asks the exporter for the
