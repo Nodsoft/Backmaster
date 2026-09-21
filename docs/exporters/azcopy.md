@@ -118,6 +118,9 @@ AZCOPY_DESTINATION/
 │   └── BACKUP_NAME/
 │       ├── payload/... + checksums.sha256, or backup.ARCHIVE
 │       └── manifest.json
+├── catalogue/
+│   └── CREATED_EPOCH/
+│       └── BACKUP_NAME.json
 └── objects/
     └── wal/...
 ```
@@ -125,14 +128,82 @@ AZCOPY_DESTINATION/
 `publish` uploads every regular files-layout object or the configured archive
 to its exact destination blob. It verifies an archive against the SHA-256 in
 the manifest, skips `manifest.json` during the artifact pass, and uploads it
-separately, last. Only a directory containing that manifest is a committed
-catalogue entry. A retry overwrites an interrupted partial upload safely and
-recommits the manifest.
+separately, after the payload. It then uploads an identical manifest to
+`catalogue/CREATED_EPOCH/BACKUP_NAME.json` as the final publication step.
+`publish` succeeds only when both manifests are durable. If catalogue publication
+fails, the core keeps the `.ready` stage; the next run retries that same stage.
 
-Catalogue operations use `azcopy list` to locate manifests, download only those
-small files, and read their embedded creation epoch and backup name. This makes
-freshness, daily serial allocation, and retention independent from blob listing
-order and last-modified timestamps.
+Catalogue records are uploaded with `--block-blob-tier=Hot`. Keep `catalogue/`
+outside every Azure lifecycle archival and deletion rule: only backup data under
+`basebackups/` and recovery data under `objects/` should follow those rules.
+Uploading as Hot does not override a lifecycle rule that archives the blob later.
+
+Freshness and health checks list catalogue keys, select the largest numeric
+creation epoch, and download **only that record**. They also check that its
+per-backup manifest still exists by listing names, without downloading it.
+Directory-name order, host suffixes, blob last-modified times, and the storage
+tiers of older backups do not affect selection. If the newest record cannot be
+read or validated, the check fails; it does not silently fall back to an older one.
+
+Daily serial allocation lists per-backup manifest names for the requested date.
+It includes legacy backups and never downloads their manifests. Retention uses
+catalogue keys without downloading historical records or archived manifests.
+All listing failures propagate as errors, rather than an empty backup store.
+
+Backup names identify one generation. A retry with the same sealed manifest is
+allowed, but publishing a different manifest under an already committed name is
+rejected. Use `daily-time` or `daily-serial` for multiple backups per day. With
+`daily`, a forced second backup using the same name must use a different naming
+mode or wait until the next day.
+
+## Migrating existing backups
+
+Upgrade the AzCopy exporter on **all nodes sharing the destination** before
+resuming timers. Older exporters do not publish catalogue records; mixing old
+and new writers can make freshness checks miss newly written backups.
+Pause backup and health timers, wait for active runs to finish, and perform the
+migration with one operator. Direct exporter commands, including import and
+retention, do not acquire the core's Consul lock.
+
+An empty catalogue with existing per-backup manifests produces an explicit
+migration error. It is not treated as an empty store and never triggers a scan
+of historical manifest contents. Choose one of these bootstrap methods:
+
+1. Import the **newest verified completed backup** while its manifest is readable:
+
+   ```bash
+   sudo -u postgres backmaster exporter production-postgres catalogue-import BACKUP_NAME
+   ```
+
+   Replace `BACKUP_NAME` with the exact remote directory name. Only that manifest
+   is downloaded. Import validates its name and integer creation epoch, then
+   publishes the Hot catalogue record. Importing the same generation is
+   idempotent. An archived manifest must be rehydrated before it can be imported;
+   other archived backups do not need rehydration.
+
+2. Create one fresh backup with a unique name:
+
+   ```bash
+   sudo -u postgres backmaster run production-postgres --force
+   ```
+
+   Use `daily-time` or `daily-serial` in the instance configuration to avoid a
+   collision with an existing daily backup. Prepare the state directory and use
+   the actual service user as described in [Operations](../guides/operations.md#direct-cli-runs).
+   The command still takes the Consul lock. If a `.ready` stage exists, it resumes
+   that stage first; check its age and run again if a fresh backup is needed.
+
+After bootstrap, run `backmaster health production-postgres`, confirm the new
+record is online, and resume the timers. Existing backups without catalogue
+records remain untouched. Numeric retention reports their count and does not
+count them toward `MINIMUM_REDUNDANCY`. Import older backups individually to
+enroll them in retention, or manage them separately with Azure lifecycle rules.
+Importing an old backup makes it eligible for deletion on the next retention run.
+
+Never seed the catalogue from an arbitrary older backup and assume it represents
+the newest backup. Import all recent candidates if their order is uncertain, or
+use the forced-backup method. A successfully indexed backup makes the catalogue
+authoritative for freshness; legacy unindexed entries are not read automatically.
 
 ## Commands
 
@@ -142,7 +213,8 @@ order and last-modified timestamps.
 | `exporter INSTANCE connectivitycheck` | Authenticates and lists the destination |
 | `exporter INSTANCE latest-epoch` | Prints the newest committed creation epoch; exits 3 if empty |
 | `exporter INSTANCE next-serial DATE` | Returns the next committed serial for the UTC date |
-| `exporter INSTANCE publish STAGE` | Uploads a sealed stage and commits its manifest last |
+| `exporter INSTANCE publish STAGE` | Uploads a sealed stage, its manifest, and finally its catalogue record |
+| `exporter INSTANCE catalogue-import NAME` | Imports one existing readable manifest into the online catalogue |
 | `exporter INSTANCE retain` | Applies committed-backup and WAL retention |
 | `exporter INSTANCE healthcheck` | Validates committed-backup freshness |
 | `exporter INSTANCE put-file SOURCE KEY` | Uploads a recovery object below `objects/` |
@@ -166,9 +238,16 @@ you need a direct CLI backup, prepare that directory as described in
 
 ## Retention
 
-Base-backup retention sorts committed manifest data newest-first. It always
+Base-backup retention sorts indexed creation epochs newest-first. It always
 preserves the newest `MINIMUM_REDUNDANCY` entries, then recursively removes
 additional entries older than `RETENTION_DAYS`.
+
+It removes the catalogue record before deleting the backup directory. If the
+record cannot be removed, it leaves the backup intact. If the directory removal
+fails afterward, the run reports failure and the remaining data is unindexed;
+inspect it before explicitly importing it again or completing its removal.
+Manual deletion or external lifecycle deletion must also remove corresponding
+catalogue records. Archival alone does not require any catalogue changes.
 
 Despite its name, `MINIMUM_REDUNDANCY` does not configure Azure replication.
 It is the minimum number of committed Backmaster backups retained in this

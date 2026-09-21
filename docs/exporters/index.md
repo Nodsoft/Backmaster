@@ -38,6 +38,13 @@ health checks, and retention must ignore payloads without a committed manifest.
 An exporter must return success from `publish` only after the manifest is
 durable. The core removes a ready stage only after that success.
 
+An exporter may also maintain a separate online catalogue. The AzCopy exporter
+publishes an epoch-keyed catalogue record after the per-backup manifest and
+reports success only after both are durable. This allows historical backup
+contents and manifests to move to Azure Archive without breaking freshness or
+retention. See its [migration guide](azcopy.md#migrating-existing-backups) before
+upgrading an existing destination; the rclone catalogue behavior is unchanged.
+
 `publish` must accept both core stage layouts. A files stage contains
 `payload/`, `checksums.sha256`, and `manifest.json`. An archive stage contains
 the archive named by `.artifact.file` and `manifest.json`; its payload and
