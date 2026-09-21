@@ -89,9 +89,13 @@ object_url() {
 }
 
 azcopy_upload() {
+    local -a tier=()
+    # Catalogue records must be readable even when the account defaults to a
+    # colder tier. Lifecycle policies must also exclude catalogue/.
+    [[ "$2" != catalogue/* ]] || tier=(--block-blob-tier=Hot)
     azcopy copy "$1" "$(object_url "$2")" --from-to=LocalBlob \
         --overwrite=true --check-length=true --put-md5 \
-        --output-level=essential --log-level=ERROR </dev/null
+        --output-level=essential --log-level=ERROR "${tier[@]}" </dev/null
 }
 
 azcopy_download() {
@@ -100,47 +104,124 @@ azcopy_download() {
         --output-level=essential --log-level=ERROR </dev/null
 }
 
-list_manifest_paths() {
-    azcopy list "$(object_url basebackups)" --machine-readable \
-        --output-level=essential --log-level=ERROR </dev/null | \
-        sed -nE 's/^(INFO: )?([^;]+\/manifest\.json); .*/\2/p'
+list_paths() {
+    local prefix="$1" output
+    # Capture before parsing: a failed listing is not an empty catalogue.
+    output="$(azcopy list "$(object_url "$prefix")" --machine-readable \
+        --output-level=essential --log-level=ERROR </dev/null)" || \
+        die "remote listing failed: $prefix"
+    sed -nE 's/^(INFO: )?([^;]+); Content Length: .*/\2/p' <<<"$output"
 }
 
-manifest_rows() {
-    local temporary path name directory
-    temporary="$(mktemp -d)"
-    trap 'rm -rf -- "$temporary"' RETURN
+validate_backup_name() {
+    [[ "$1" =~ ^[A-Za-z0-9._-]+$ && "$1" != . && "$1" != *..* ]] || \
+        die "invalid backup name: $1"
+}
+
+manifest_names() {
+    local paths path name
+    paths="$(list_paths basebackups)" || return 1
+    while IFS= read -r path; do
+        [[ "$path" =~ ^([^/]+)/manifest\.json$ ]] || continue
+        name="${BASH_REMATCH[1]}"
+        validate_backup_name "$name"
+        printf '%s\n' "$name"
+    done <<<"$paths"
+}
+
+catalogue_rows() {
+    local paths path epoch name rows="" duplicates
+    paths="$(list_paths catalogue)" || return 1
     while IFS= read -r path; do
         [[ -n "$path" ]] || continue
-        azcopy_download "basebackups/$path" "$temporary/manifest.json" >/dev/null
-        name="$(jq -er '.backup_name' "$temporary/manifest.json")" || \
-            die "invalid remote manifest: $path"
-        directory="${path%/manifest.json}"
-        [[ "$name" == "$directory" && "$name" =~ ^[A-Za-z0-9._-]+$ && "$name" != *..* ]] || \
-            die "manifest name does not match its remote directory: $path"
-        jq -er '[.created_epoch, .backup_name] | @tsv' \
-            "$temporary/manifest.json"
-    done < <(list_manifest_paths)
+        [[ "$path" =~ ^(0|[1-9][0-9]{0,14})/([^/]+)\.json$ ]] || \
+            die "invalid catalogue path: $path"
+        epoch="${BASH_REMATCH[1]}"; name="${BASH_REMATCH[2]}"
+        validate_backup_name "$name"
+        rows+="${epoch}"$'\t'"${name}"$'\n'
+    done <<<"$paths"
+    [[ -n "$rows" ]] || return 0
+    duplicates="$(printf '%s' "$rows" | cut -f2 | sort | uniq -d)"
+    [[ -z "$duplicates" ]] || die "conflicting catalogue records for: $duplicates"
+    printf '%s' "$rows" | LC_ALL=C sort -t$'\t' -k1,1nr -k2,2
 }
 
-latest_epoch() {
-    local latest
-    latest="$(manifest_rows | cut -f1 | sort -n | tail -1)"
-    [[ -n "$latest" ]] || exit 3
-    printf '%s\n' "$latest"
+download_manifest() {
+    local key="$1" destination="$2"
+    rm -f -- "$destination" || return 1
+    azcopy_download "$key" "$destination" >/dev/null || \
+        die "remote manifest download failed: $key (check access and archive tier)"
+    [[ -s "$destination" ]] || die "remote manifest download produced no file: $key"
 }
+
+manifest_epoch() {
+    local file="$1" name="$2"
+    jq -ers --arg name "$name" '
+        select(length == 1) | .[0] |
+        select(type == "object" and .backup_name == $name) |
+        .created_epoch | select(type == "number") |
+        select(. >= 0 and . <= 999999999999999 and . == floor)
+    ' "$file" || die "invalid manifest name or creation epoch: $name"
+}
+
+latest_epoch() (
+    local rows names epoch name temporary actual
+    rows="$(catalogue_rows)" || exit 1
+    if [[ -z "$rows" ]]; then
+        names="$(manifest_names)" || exit 1
+        [[ -z "$names" ]] || die "legacy backups need catalogue migration: import the newest verified backup with catalogue-import NAME, or run one backup with --force and a unique name"
+        exit 3
+    fi
+    IFS=$'\t' read -r epoch name <<<"$rows"
+    names="$(manifest_names)" || exit 1
+    grep -Fxq -- "$name" <<<"$names" || \
+        die "catalogue references a missing backup manifest: $name"
+    temporary="$(mktemp -d)" || exit 1
+    trap 'rm -rf -- "$temporary"' EXIT
+    download_manifest "catalogue/$epoch/$name.json" "$temporary/manifest.json" || exit 1
+    actual="$(manifest_epoch "$temporary/manifest.json" "$name")" || exit 1
+    [[ "$actual" == "$epoch" ]] || die "catalogue epoch mismatch: $name"
+    printf '%s\n' "$epoch"
+)
 
 next_serial() {
-    local day="$1" latest
+    local day="$1" latest names
     [[ "$day" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || \
         die "invalid serial date: $day"
-    latest="$(manifest_rows | cut -f2 | \
+    names="$(manifest_names)" || return 1
+    latest="$(printf '%s\n' "$names" | \
         sed -nE "s/^${day}-([0-9]+)(-|$).*/\\1/p" | sort -n | tail -1)"
-    printf '%d\n' "$(( ${latest:-0} + 1 ))"
+    # Explicit decimal arithmetic handles serials 008 and 009 correctly.
+    [[ ${#latest} -le 15 ]] || die "serial out of range: $day"
+    printf '%d\n' "$(( 10#${latest:-0} + 1 ))"
 }
 
-publish() {
-    local stage="$1" name source relative layout archive expected actual
+# A backup name identifies one generation. Replacing it with a different epoch
+# would leave an old catalogue record referring to the new payload.
+check_catalogue_identity() {
+    local name="$1" epoch="$2" rows existing_epoch existing_name
+    rows="$(catalogue_rows)" || return 1
+    while IFS=$'\t' read -r existing_epoch existing_name; do
+        [[ "$existing_name" == "$name" ]] || continue
+        [[ "$existing_epoch" == "$epoch" ]] || \
+            die "backup name already committed: $name; use daily-time or daily-serial"
+    done <<<"$rows"
+}
+
+catalogue_import() (
+    local name="$1" temporary epoch
+    validate_backup_name "$name"
+    temporary="$(mktemp -d)" || exit 1
+    trap 'rm -rf -- "$temporary"' EXIT
+    download_manifest "basebackups/$name/manifest.json" "$temporary/manifest.json" || exit 1
+    epoch="$(manifest_epoch "$temporary/manifest.json" "$name")" || exit 1
+    check_catalogue_identity "$name" "$epoch" || exit 1
+    azcopy_upload "$temporary/manifest.json" "catalogue/$epoch/$name.json" || \
+        die "catalogue import failed: $name"
+)
+
+publish() (
+    local stage="$1" name epoch source relative layout archive expected actual names temporary
     [[ -r "$stage/manifest.json" ]] || die "invalid stage: $stage"
     layout="$(jq -er '.artifact.layout // "files"' "$stage/manifest.json")" || \
         die "invalid stage manifest: $stage"
@@ -161,30 +242,70 @@ publish() {
         *) die "unsupported artifact layout: $layout" ;;
     esac
     name="$(jq -er '.backup_name' "$stage/manifest.json")"
-    [[ "$name" =~ ^[A-Za-z0-9._-]+$ && "$name" != *..* ]] || \
-        die "invalid backup name"
+    validate_backup_name "$name"
+    epoch="$(manifest_epoch "$stage/manifest.json" "$name")" || exit 1
+    check_catalogue_identity "$name" "$epoch" || exit 1
+    names="$(manifest_names)" || exit 1
+    if grep -Fxq -- "$name" <<<"$names"; then
+        temporary="$(mktemp -d)" || exit 1
+        trap 'rm -rf -- "$temporary"' EXIT
+        download_manifest "basebackups/$name/manifest.json" "$temporary/manifest.json" || exit 1
+        # Retries of the same sealed stage are allowed; other name collisions
+        # must not overwrite a committed backup (including a legacy backup).
+        jq -e -s 'length == 2 and .[0] == .[1]' \
+            "$stage/manifest.json" "$temporary/manifest.json" >/dev/null || \
+            die "backup name already committed with a different manifest: $name"
+    fi
 
     while IFS= read -r -d '' source; do
         relative="${source#"$stage"/}"
         [[ "$relative" != manifest.json ]] || continue
-        azcopy_upload "$source" "basebackups/$name/$relative"
+        azcopy_upload "$source" "basebackups/$name/$relative" || \
+            die "backup upload failed: $name/$relative"
     done < <(find "$stage" -type f -print0 | sort -z)
-    azcopy_upload "$stage/manifest.json" "basebackups/$name/manifest.json"
-}
+    azcopy_upload "$stage/manifest.json" "basebackups/$name/manifest.json" || \
+        die "backup manifest upload failed: $name"
+    azcopy_upload "$stage/manifest.json" "catalogue/$epoch/$name.json" || \
+        die "catalogue publication failed: $name; ready stage must be retried"
+)
 
 retain() {
-    local cutoff rows keep epoch name wal_cutoff
+    local cutoff rows keep epoch name wal_cutoff names indexed unindexed
     if [[ "$RETENTION_DAYS" != unlimited ]]; then
         cutoff=$(( $(date +%s) - RETENTION_DAYS * 86400 ))
-        rows="$(manifest_rows | sort -nr)"
+        rows="$(catalogue_rows)" || return 1
+        names="$(manifest_names)" || return 1
+        # Stale records must not count toward minimum redundancy and cause
+        # deletion of the remaining real backups. Validate before any removal.
+        while IFS=$'\t' read -r epoch name; do
+            [[ -n "$epoch" ]] || continue
+            grep -Fxq -- "$name" <<<"$names" || \
+                die "catalogue references a missing backup manifest: $name"
+        done <<<"$rows"
+        indexed="$(cut -f2 <<<"$rows")"
+        unindexed=0
+        while IFS= read -r name; do
+            [[ -n "$name" ]] || continue
+            if ! grep -Fxq -- "$name" <<<"$indexed"; then
+                unindexed=$((unindexed + 1))
+            fi
+        done <<<"$names"
+        if (( unindexed > 0 )); then
+            echo "azcopy exporter: preserving $unindexed unindexed backup(s); use catalogue-import NAME to include them in retention" >&2
+        fi
         keep=0
         while IFS=$'\t' read -r epoch name; do
             [[ -n "$epoch" ]] || continue
             keep=$((keep + 1))
             if (( keep > MINIMUM_REDUNDANCY && epoch < cutoff )); then
+                # Remove discoverability first. If payload deletion then fails,
+                # it is preserved as an unindexed backup, never a false success.
+                azcopy remove "$(object_url "catalogue/$epoch/$name.json")" \
+                    --output-level=essential --log-level=ERROR </dev/null || \
+                    die "catalogue removal failed: $name"
                 azcopy remove "$(object_url "basebackups/$name")" \
                     --recursive=true --output-level=essential --log-level=ERROR \
-                    </dev/null
+                    </dev/null || die "backup removal failed (now unindexed): $name"
             fi
         done <<<"$rows"
     fi
@@ -222,9 +343,14 @@ connectivitycheck() {
 }
 
 healthcheck() {
-    local latest age
+    local latest age status
     latest="$(latest_epoch)" || {
-        echo "CRITICAL: no completed exported backup"
+        status=$?
+        if (( status == 3 )); then
+            echo "CRITICAL: no completed exported backup"
+        else
+            echo "CRITICAL: unable to determine latest exported backup"
+        fi
         exit 2
     }
     age=$(( $(date +%s) - latest ))
@@ -241,6 +367,7 @@ main() {
         latest-epoch) latest_epoch ;;
         next-serial) [[ $# -eq 2 ]] || exit 64; next_serial "$2" ;;
         publish) [[ $# -eq 2 ]] || exit 64; publish "$2" ;;
+        catalogue-import) [[ $# -eq 2 ]] || exit 64; catalogue_import "$2" ;;
         retain) retain ;;
         connectivitycheck) connectivitycheck ;;
         healthcheck) healthcheck ;;
