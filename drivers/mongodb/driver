@@ -77,13 +77,13 @@ try {
     const query = uri.indexOf("?");
     let address = query < 0 ? uri : uri.slice(0, query);
     const options = new URLSearchParams(query < 0 ? "" : uri.slice(query + 1));
-    function option(name, value) {
+    const option = (name, value) => {
         if (!value) return;
         for (const key of [...options.keys()]) {
             if (key.toLowerCase() === name.toLowerCase()) options.delete(key);
         }
         options.set(name, value);
-    }
+    };
     if (env.MONGODB_USERNAME) {
         const credentials = encodeURIComponent(env.MONGODB_USERNAME) +
             (env.MONGODB_PASSWORD ? ":" + encodeURIComponent(env.MONGODB_PASSWORD) : "");
