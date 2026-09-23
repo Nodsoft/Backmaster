@@ -190,24 +190,74 @@ sudo apt install --only-upgrade \
 ```
 
 Replace the exporter package with `backmaster-exporter-azcopy` on AzCopy
-instances.
+instances. Replace `backmaster-driver-postgres` with
+`backmaster-driver-mongodb` on MongoDB instances.
 
-Then verify:
+Then verify the common installation:
 
 ```bash
 backmaster --version
 sudo systemctl daemon-reload
+```
+
+For a PostgreSQL instance using the packaged `postgres` drop-in:
+
+```bash
 sudo -u postgres backmaster connectivity production-postgres
 sudo -u postgres backmaster health production-postgres
+```
+
+For MongoDB, use the default `backmaster` service identity and the configured
+MongoDB instance name (here `production-mongodb`):
+
+```bash
+sudo -u backmaster backmaster connectivity production-mongodb
+sudo -u backmaster backmaster health production-mongodb
 ```
 
 Configuration below `/etc/backmaster` is administrator-owned. Review release
 notes and packaged examples before adopting new settings.
 
+## Restore and verification
+
+Download only backups with a committed `manifest.json`. For the `files` layout,
+download `payload/`, `checksums.sha256`, and the manifest into one directory,
+then verify from that directory:
+
+```bash
+sha256sum --check checksums.sha256
+```
+
+For an archive layout, download the manifest and its `.artifact.file`, verify
+the outer digest before extraction, then verify the contained files:
+
+```bash
+archive="$(jq -er '.artifact.file' manifest.json)"
+printf '%s  %s\n' "$(jq -er '.artifact.sha256' manifest.json)" "$archive" | \
+  sha256sum --check -
+
+restore_dir="$(mktemp -d "$PWD/restore.XXXXXXXX")"
+case "$(jq -er '.artifact.format' manifest.json)" in
+  zip) unzip "$archive" -d "$restore_dir" ;;
+  tar.gz) tar -xzf "$archive" -C "$restore_dir" ;;
+  tar.xz) tar -xJf "$archive" -C "$restore_dir" ;;
+  tar.zst) tar --zstd -xf "$archive" -C "$restore_dir" ;;
+  *) echo "Unsupported archive format" >&2; exit 1 ;;
+esac
+
+cd -- "$restore_dir"
+sha256sum --check checksums.sha256
+```
+
+Extract into an empty, isolated restore directory. A checksum proves transport
+integrity, not source consistency or application usability. Continue with the
+driver-specific restore runbook.
+
 ## Routine restore drills
 
-At least on every material PostgreSQL or storage change—and regularly
-thereafter—restore the newest backup to an isolated host, verify checksums,
-start PostgreSQL on a non-production port, and run application-level checks.
-Periodically test a timestamped PITR and a backup created by each fallback node.
-Record restore duration against the recovery-time objective.
+At least on every material database or storage change—and regularly
+thereafter—restore the newest backup to an isolated host, verify checksums, and
+run application-level checks. For PostgreSQL physical mode, periodically test
+a timestamped PITR. For MongoDB, test both a complete database and a selective
+collection restore. Exercise a backup created by each fallback node and record
+restore duration against the recovery-time objective.

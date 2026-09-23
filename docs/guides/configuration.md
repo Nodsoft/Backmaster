@@ -2,7 +2,8 @@
 
 This guide covers shared instance configuration. Component-specific behavior is
 documented with the installed component: see the
-[PostgreSQL driver](../drivers/postgresql.md) and
+[PostgreSQL](../drivers/postgresql.md) or [MongoDB](../drivers/mongodb.md)
+driver and
 [rclone](../exporters/rclone.md) or [AzCopy](../exporters/azcopy.md) exporter.
 
 An instance joins one driver to one exporter. Its name is the filename below
@@ -145,6 +146,32 @@ No storage credentials belong in the driver file. The
 is the canonical list of every driver setting, PostgreSQL/libpq pass-through
 variable, default, validation rule, and mode-specific dependency.
 
+## MongoDB driver file
+
+Example: `/etc/backmaster/drivers/mongodb/production-mongodb.env`
+
+```bash
+MONGODB_URI=mongodb://127.0.0.1:27017/
+MONGODB_AUTH_DATABASE=admin
+MONGODB_DUMP_FORMAT=archive
+MONGODB_FILE_NAMING=plain
+MONGODB_GZIP=true
+MONGODB_NUM_PARALLEL_COLLECTIONS=4
+MONGODB_INCLUDE_SYSTEM_DATABASES=false
+MONGODB_DUMP_DB_USERS_AND_ROLES=false
+# MONGODB_DATABASE_INCLUDE=$'application\nanalytics'
+# MONGODB_DATABASE_EXCLUDE=$'scratch\ntest'
+```
+
+Put `MONGODB_USERNAME`, `MONGODB_PASSWORD`, private-key passwords, and cloud
+identity secrets in `DRIVER_SECRET_FILE`, not the policy file. Empty inclusion
+selects every visible non-system database. Explicit missing or unauthorized
+names fail the backup, exclusions win, and an empty final selection fails.
+
+The [MongoDB driver reference](../drivers/mongodb.md#configuration-reference)
+is the canonical setting list and documents TLS, authentication, output
+layouts, consistency, permissions, setup, sizing, and health behavior.
+
 ## Rclone exporter file
 
 Example: `/etc/backmaster/exporters/rclone/production-postgres.env`
@@ -243,3 +270,5 @@ Physical payloads contain `pg_basebackup` tar archives. Logical payloads contain
 `globals.sql.gz`, `databases.json`, and configurable custom (`.dump`) or plain
 SQL (`.sql`) dumps under `databases/`. Filenames can be SHA-256 hashes or plain
 database names; see the [PostgreSQL driver reference](../drivers/postgresql.md).
+MongoDB payloads contain `databases.json` plus one archive or BSON directory per
+selected database; see the [MongoDB driver reference](../drivers/mongodb.md).
