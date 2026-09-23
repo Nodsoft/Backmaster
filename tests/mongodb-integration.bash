@@ -20,7 +20,7 @@ mkdir "$temporary/source" "$temporary/target" "$temporary/credentials"
 export TMPDIR="$temporary/credentials"
 # These credentials are generated test fixtures, never production credentials.
 export MONGODB_USERNAME=backup
-export MONGODB_PASSWORD=$'test:"quotes"\\ @&+%\nsecond line'
+export MONGODB_PASSWORD=$'test:"quotes"\\ @&+% unicode-é'
 export MONGODB_TLS_CERTIFICATE_KEY_FILE_PASSWORD='test PEM: @&+%'
 export MONGODB_URI='mongodb://localhost:29717/?serverSelectionTimeoutMS=3000'
 export MONGODB_AUTH_DATABASE=admin
