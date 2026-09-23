@@ -206,6 +206,25 @@ absolute, protected writable directories outside the backup stage and allowed
 by the unit's systemd sandbox. AzCopy files may contain storage names and
 operational metadata.
 
+### Archived historical manifest blocks the latest-backup check
+
+Older AzCopy exporters download every historical manifest to determine freshness.
+If a manifest moves to Azure Archive, the run can fail with `invalid remote
+manifest` and a missing temporary file even when newer backups are readable.
+
+Upgrade every writer to the exporter with the separate online `catalogue/`
+prefix. Follow [Migrating existing backups](../exporters/azcopy.md#migrating-existing-backups):
+import the newest verified readable backup by name, or force a fresh backup with
+a unique name. The updated exporter reports a migration error until this step
+is complete; it does not guess a timestamp from directory ordering. Keep the
+catalogue outside lifecycle archival and deletion rules.
+
+An unreadable newest catalogue record or failed listing is a storage error,
+not an empty store. A `preserving ... unindexed backup(s)` retention warning
+means legacy backups are left intact until individually imported or managed
+separately. If catalogue publication fails, retain the local `.ready` stage and
+rerun after fixing access; the core resumes publication automatically.
+
 ## Disk space
 
 Check the stage filesystem:

@@ -27,7 +27,7 @@ done
     "backmaster-core (= $version), backmaster-driver-postgres (= $version), backmaster-exporter-rclone (= $version)" ]]
 [[ "$(field backmaster-driver-postgres Depends)" == *"backmaster-core (= $version)"* ]]
 [[ "$(field backmaster-driver-mongodb Depends)" == *"backmaster-core (= $version)"* ]]
-[[ "$(field backmaster-driver-mongodb Depends)" == *"mongodb-database-tools"* ]]
+[[ "$(field backmaster-driver-mongodb Depends)" == *"mongodb-database-tools (>= 100.3.0)"* ]]
 [[ "$(field backmaster-driver-mongodb Depends)" == *"mongodb-mongosh"* ]]
 [[ "$(field backmaster-exporter-rclone Depends)" == *"backmaster-core (= $version)"* ]]
 [[ "$(field backmaster-exporter-azcopy Depends)" == *"backmaster-core (= $version)"* ]]

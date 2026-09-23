@@ -193,13 +193,26 @@ Replace the exporter package with `backmaster-exporter-azcopy` on AzCopy
 instances. Replace `backmaster-driver-postgres` with
 `backmaster-driver-mongodb` on MongoDB instances.
 
-Then verify:
+Then verify the common installation:
 
 ```bash
 backmaster --version
 sudo systemctl daemon-reload
+```
+
+For a PostgreSQL instance using the packaged `postgres` drop-in:
+
+```bash
 sudo -u postgres backmaster connectivity production-postgres
 sudo -u postgres backmaster health production-postgres
+```
+
+For MongoDB, use the default `backmaster` service identity and the configured
+MongoDB instance name (here `production-mongodb`):
+
+```bash
+sudo -u backmaster backmaster connectivity production-mongodb
+sudo -u backmaster backmaster health production-mongodb
 ```
 
 Configuration below `/etc/backmaster` is administrator-owned. Review release
@@ -223,13 +236,16 @@ archive="$(jq -er '.artifact.file' manifest.json)"
 printf '%s  %s\n' "$(jq -er '.artifact.sha256' manifest.json)" "$archive" | \
   sha256sum --check -
 
+restore_dir="$(mktemp -d "$PWD/restore.XXXXXXXX")"
 case "$(jq -er '.artifact.format' manifest.json)" in
-  zip) unzip "$archive" ;;
-  tar.gz) tar -xzf "$archive" ;;
-  tar.xz) tar -xJf "$archive" ;;
-  tar.zst) tar --zstd -xf "$archive" ;;
+  zip) unzip "$archive" -d "$restore_dir" ;;
+  tar.gz) tar -xzf "$archive" -C "$restore_dir" ;;
+  tar.xz) tar -xJf "$archive" -C "$restore_dir" ;;
+  tar.zst) tar --zstd -xf "$archive" -C "$restore_dir" ;;
+  *) echo "Unsupported archive format" >&2; exit 1 ;;
 esac
 
+cd -- "$restore_dir"
 sha256sum --check checksums.sha256
 ```
 

@@ -131,10 +131,26 @@ X.509 deployments may instead reference a protected client PEM with
 MongoDB tools may also be supplied through the secret file. Prefer workload
 identity and short-lived credentials over static passwords.
 
-MongoDB's non-interactive command-line tools receive connection options as
-arguments. On hosts where users can inspect one another's process arguments,
-apply operating-system process isolation and use a dedicated service identity.
-Never log an expanded command or enable shell tracing. See the
+Use a separate directory so existing PostgreSQL-only permissions do not block
+the packaged `backmaster` identity:
+
+```bash
+sudo install -d -m 0750 -o root -g backmaster /etc/backmaster/mongodb-secrets
+sudo install -m 0640 -o root -g backmaster mongodb-driver.env \
+  /etc/backmaster/mongodb-secrets/production-mongodb-driver.env
+sudo install -m 0640 -o root -g backmaster mongodb-exporter.env \
+  /etc/backmaster/mongodb-secrets/production-mongodb-exporter.env
+sudo -u backmaster test -r /etc/backmaster/mongodb-secrets/production-mongodb-driver.env
+sudo -u backmaster test -r /etc/backmaster/mongodb-secrets/production-mongodb-exporter.env
+```
+
+Discovery reads credentials inside mongosh from its environment. Dumps use a
+temporary mode-0600 `mongodump --config` file for the URI, login password, and
+PEM password; passwords are never expanded into process arguments. This file
+is outside staging and removed when the dump exits, including failures and
+handled signals. SIGKILL or host failure can leave a protected temporary file;
+use the packaged `PrivateTmp=true` sandbox. Root and same-identity processes
+can still inspect credentials. Never enable shell tracing. See the
 [MongoDB driver reference](../drivers/mongodb.md#configuration-reference) for
 the complete authentication and TLS surface.
 

@@ -180,7 +180,7 @@ install -m 0644 \
 install -m 0644 "$ROOT/config/instances/nsys-mongodb.env.example" \
     "$mongodb_driver_root/usr/share/doc/$MONGODB_DRIVER_PACKAGE/examples/config/instances/"
 write_control "$MONGODB_DRIVER_PACKAGE" \
-    "$CORE_PACKAGE (= $VERSION), bash (>= 4.4), jq, mongodb-database-tools, mongodb-mongosh" \
+    "$CORE_PACKAGE (= $VERSION), bash (>= 4.4), jq, mongodb-database-tools (>= 100.3.0), mongodb-mongosh" \
     "MongoDB driver for Backmaster" \
     "Discovers authorized MongoDB databases and produces filtered, independently restorable mongodump archives or collection-file directories." \
     "Breaks: $META_PACKAGE (<< $VERSION)

@@ -25,3 +25,22 @@ jobs:
       - run: bash tests/rclone-exporter.bash
       - run: bash tests/azcopy-exporter.bash
       - run: bash tests/debian-packages.bash
+
+  mongodb-integration:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned MongoDB test tools
+        run: |
+          set -euo pipefail
+          tool_dir="$RUNNER_TEMP/mongodb-tools"
+          mkdir -p "$tool_dir"
+          curl -fsSL --retry 3 https://fastdl.mongodb.org/tools/db/mongodb-database-tools-ubuntu2404-x86_64-100.15.0.tgz -o "$RUNNER_TEMP/tools.tgz"
+          curl -fsSL --retry 3 https://downloads.mongodb.com/compass/mongosh-2.5.10-linux-x64.tgz -o "$RUNNER_TEMP/shell.tgz"
+          curl -fsSL --retry 3 https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2404-8.0.12.tgz -o "$RUNNER_TEMP/server.tgz"
+          for archive in tools shell server; do
+            tar -xzf "$RUNNER_TEMP/$archive.tgz" -C "$tool_dir" --strip-components=1 --no-same-owner
+          done
+          echo "$tool_dir/bin" >> "$GITHUB_PATH"
+      - name: Exercise real authentication, TLS, backups and restores
+        run: bash tests/mongodb-integration.bash

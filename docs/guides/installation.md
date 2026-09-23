@@ -99,8 +99,17 @@ sudo install -d -m 0755 \
   /etc/backmaster/drivers/mongodb \
   /etc/backmaster/exporters/rclone \
   /etc/backmaster/exporters/azcopy
+# MongoDB (generic backmaster service identity):
+sudo install -d -m 0750 -o root -g backmaster /etc/backmaster/mongodb-secrets
+# PostgreSQL only, when using the postgres service identity:
 sudo install -d -m 0750 -o root -g postgres /etc/backmaster/secrets
 ```
+
+On a MongoDB-only host, omit the PostgreSQL-only command. MongoDB driver and
+exporter secrets belong in `/etc/backmaster/mongodb-secrets`, owned by
+`root:backmaster` with mode `0640`; its instance example uses these paths.
+This sibling directory also works when an existing PostgreSQL deployment keeps
+`/etc/backmaster/secrets` restricted to `root:postgres`.
 
 Copy the examples from the package documentation or this repository, remove the
 `.example` suffix, and edit every placeholder. The next guide explains every
@@ -116,8 +125,8 @@ On a Debian-compatible build host with `dpkg-deb`:
 VERSION=0.1.0 ARCH=all ./packaging/build-deb.sh
 ```
 
-The output directory defaults to `dist/` and contains the core, PostgreSQL
-driver, both exporters, and metapackage. Override it with `OUT_DIR=/path`.
+The output directory defaults to `dist/` and contains the core, PostgreSQL and MongoDB
+drivers, both exporters, and metapackage. Override it with `OUT_DIR=/path`.
 
 ## Verify the install
 

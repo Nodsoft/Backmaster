@@ -52,8 +52,15 @@ both files set the same variable.
 Assignments are exported, so AWS IAM credentials and proxy variables supported
 by MongoDB tools may be placed in the protected secret file. Prefer workload
 identity or short-lived credentials where possible. Do not embed credentials in
-`MONGODB_URI`: command-line connection arguments may be visible to other local
-processes on systems without process isolation.
+`MONGODB_URI` in the policy file. Discovery reads credentials from its process
+environment inside a static `mongosh --nodb --eval` script. Dumps receive the URI,
+login password, and PEM password through a temporary mode-0600 `--config` file,
+outside the staged payload, removed on success, failure, or a handled signal.
+No password or URI is expanded into a tool's command arguments (including `jq`).
+Root and processes running as the service identity can still inspect the
+environment or temporary file. SIGKILL or host failure may leave a protected
+temporary file behind; use a dedicated service identity and private temporary
+storage (the packaged systemd services use `PrivateTmp=true`).
 
 `MONGODB_TLS_INSECURE=true` weakens both certificate-chain and hostname
 verification. It should not be used for production backups. A `mongodb+srv://`
@@ -132,8 +139,8 @@ The driver executable also implements the standard internal
 ## Dependencies and compatibility
 
 Install matching, supported releases of `mongodb-mongosh` and
-`mongodb-database-tools`. `mongodump` creates BSON data plus collection metadata
-and indexes; `mongorestore` is the corresponding restore tool. MongoDB advises
+`mongodb-database-tools` (100.3.0 or newer for `--config`). `mongodump` creates
+BSON data plus collection metadata and indexes; `mongorestore` is the corresponding restore tool. MongoDB advises
 restoring into a compatible MongoDB version or feature compatibility version.
 Queryable Encryption collections are not supported by `mongodump`.
 
@@ -153,7 +160,8 @@ Copy the packaged examples:
 ```bash
 docs=/usr/share/doc/backmaster-driver-mongodb/examples
 
-sudo install -d -m 0755 /etc/backmaster/drivers/mongodb
+sudo install -d -m 0755 /etc/backmaster/instances.d /etc/backmaster/drivers/mongodb
+sudo install -d -m 0750 -o root -g backmaster /etc/backmaster/mongodb-secrets
 sudo install -m 0644 \
   "$docs/config/instances/nsys-mongodb.env.example" \
   /etc/backmaster/instances.d/production-mongodb.env
@@ -162,7 +170,7 @@ sudo install -m 0644 \
   /etc/backmaster/drivers/mongodb/production-mongodb.env
 sudo install -m 0640 -o root -g backmaster \
   "$docs/config/drivers/mongodb.secrets.env.example" \
-  /etc/backmaster/secrets/production-mongodb-driver.env
+  /etc/backmaster/mongodb-secrets/production-mongodb-driver.env
 ```
 
 Configure the exporter under the same instance name and use a destination root
@@ -185,6 +193,8 @@ not start MongoDB; add `Wants=` only if that coupling is intentional.
 Commission before scheduling:
 
 ```bash
+sudo -u backmaster test -r /etc/backmaster/mongodb-secrets/production-mongodb-driver.env
+sudo -u backmaster test -r /etc/backmaster/mongodb-secrets/production-mongodb-exporter.env
 sudo -u backmaster backmaster connectivity production-mongodb
 sudo systemctl start backmaster@production-mongodb.service
 sudo -u backmaster backmaster health production-mongodb
@@ -207,3 +217,14 @@ With `BACKUP_ARCHIVE_FORMAT=files`, peak staging is approximately the completed
 payload plus metadata. Whole-backup archive modes temporarily require both the
 payload and its final archive. A failed export intentionally retains the sealed
 stage for retry.
+
+## Regression checks
+
+`bash tests/mongodb-driver.bash` exercises discovery, filtering, secret handling,
+TLS option mapping, and temporary-file cleanup using Node.js and tool doubles.
+`bash tests/mongodb-integration.bash` requires `mongod`, `mongosh`, Database Tools,
+and OpenSSL. It starts disposable servers on localhost ports 29717 and 29718,
+checks password authentication and encrypted client PEMs, verifies TLS hostname
+rejection and the explicit insecure override, and restores archive/directory
+data plus users and roles. CI runs both suites; integration uses MongoDB 8.0.12,
+mongosh 2.5.10, and Database Tools 100.15.0.

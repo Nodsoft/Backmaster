@@ -29,8 +29,13 @@ deployment whose version and feature compatibility version are compatible with
 the dump. Provision enough capacity for data, indexes, and restore working
 space. Keep application clients disconnected until validation finishes.
 
-Store target credentials in a protected shell variable or tool configuration;
-do not reuse the production backup credential. The examples use:
+Keep target credentials in a mode-0600 Database Tools YAML configuration
+(`password`, `uri`, and optionally `sslPEMKeyPassword`), supplied with
+`--config=/protected/path/restore.yml`. Do not put credentials in `target_uri`
+or `--password` arguments, and do not reuse the production backup credential.
+The examples below assume an isolated local target without authentication; add
+`--config` and the required non-secret authentication/TLS options for a secured
+target. The examples use:
 
 ```bash
 target_uri='mongodb://127.0.0.1:27018/'
@@ -50,7 +55,7 @@ source_database='application'
 dump_path="$(jq -er --arg database "$source_database" \
   '.databases[] | select(.database == $database) | .path' \
   payload/databases.json)"
-gzip_enabled="$(jq -er '.gzip' payload/databases.json)"
+gzip_enabled="$(jq -r '.gzip' payload/databases.json)"
 
 restore_args=(--uri="$target_uri" --archive="payload/$dump_path")
 [[ "$gzip_enabled" == false ]] || restore_args+=(--gzip)
@@ -74,7 +79,7 @@ source_database='application'
 dump_path="$(jq -er --arg database "$source_database" \
   '.databases[] | select(.database == $database) | .path' \
   payload/databases.json)"
-gzip_enabled="$(jq -er '.gzip' payload/databases.json)"
+gzip_enabled="$(jq -r '.gzip' payload/databases.json)"
 
 restore_args=(--uri="$target_uri")
 [[ "$gzip_enabled" == false ]] || restore_args+=(--gzip)
@@ -88,7 +93,36 @@ Use `--nsInclude` or `--nsExclude` for a controlled collection subset. Preview
 the index and directory contents first; namespace patterns are evaluated by
 `mongorestore`, not Backmaster.
 
-## 5. Validate the restored database
+## 5. Restore database users and roles in the original namespace
+
+The namespace-remapping examples above restore application data. Recreate users
+and roles explicitly under the target policy when renaming a database. To restore
+identities from a dump made with `MONGODB_DUMP_DB_USERS_AND_ROLES=true`, use a
+separate original-namespace restore instead of the remapping commands. It restores
+data and identities together; do not run both paths against the same target.
+Do not combine `--restoreDbUsersAndRoles` with `--nsFrom`, `--nsTo`, `--nsInclude`,
+or `--nsExclude`. Review the identities first and keep the target isolated.
+
+For a non-`admin` database, using the indexed `dump_path` resolved above:
+
+```bash
+restore_args=(--uri="$target_uri" --db="$source_database" --restoreDbUsersAndRoles)
+[[ "$gzip_enabled" == false ]] || restore_args+=(--gzip)
+case "$(jq -r '.dump_format' payload/databases.json)" in
+  archive) restore_args+=(--archive="payload/$dump_path") ;;
+  directory) restore_args+=("payload/$dump_path/$source_database") ;;
+  *) echo "Unsupported dump format" >&2; exit 1 ;;
+esac
+mongorestore "${restore_args[@]}"
+```
+
+For `admin`, use `--db=admin` **without** `--restoreDbUsersAndRoles`: MongoDB
+restores its users and roles automatically. Do not remap `admin`; review this
+separately because it affects deployment-wide access. Atlas Free and Flex
+clusters do not support `--restoreDbUsersAndRoles` or restoring `admin`; recreate
+identities through the target's supported management workflow instead.
+
+## 6. Validate the restored database
 
 At minimum:
 

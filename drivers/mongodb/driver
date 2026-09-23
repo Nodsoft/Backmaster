@@ -19,7 +19,7 @@ load_config() {
     set +a
 
     : "${MONGODB_URI:?MONGODB_URI is required}"
-    MONGODB_AUTH_DATABASE="${MONGODB_AUTH_DATABASE:-admin}"
+    export MONGODB_AUTH_DATABASE="${MONGODB_AUTH_DATABASE:-admin}"
     MONGODB_DUMP_FORMAT="${MONGODB_DUMP_FORMAT:-archive}"
     MONGODB_FILE_NAMING="${MONGODB_FILE_NAMING:-plain}"
     MONGODB_GZIP="${MONGODB_GZIP:-true}"
@@ -38,46 +38,87 @@ load_config() {
         die "MONGODB_INCLUDE_SYSTEM_DATABASES must be true or false"
     is_boolean "$MONGODB_DUMP_DB_USERS_AND_ROLES" || \
         die "MONGODB_DUMP_DB_USERS_AND_ROLES must be true or false"
+    is_boolean "${MONGODB_TLS_INSECURE:-false}" || \
+        die "MONGODB_TLS_INSECURE must be true or false"
     [[ "$MONGODB_NUM_PARALLEL_COLLECTIONS" =~ ^[1-9][0-9]*$ ]] || \
         die "MONGODB_NUM_PARALLEL_COLLECTIONS must be a positive integer"
 }
 
-connection_arguments() {
-    CONNECTION_ARGUMENTS=(--uri="$MONGODB_URI")
+# Only non-secret options belong in argv. The URI and both passwords are
+# supplied separately through mongodump's protected config file.
+dump_connection_arguments() {
+    CONNECTION_ARGUMENTS=()
     if [[ -n "${MONGODB_USERNAME:-}" ]]; then
         CONNECTION_ARGUMENTS+=(--username="$MONGODB_USERNAME")
     fi
-    if [[ -n "${MONGODB_PASSWORD:-}" ]]; then
-        CONNECTION_ARGUMENTS+=(--password="$MONGODB_PASSWORD")
-    fi
-    if [[ -n "${MONGODB_AUTH_DATABASE:-}" ]]; then
-        CONNECTION_ARGUMENTS+=(--authenticationDatabase="$MONGODB_AUTH_DATABASE")
-    fi
+    CONNECTION_ARGUMENTS+=(--authenticationDatabase="$MONGODB_AUTH_DATABASE")
     if [[ -n "${MONGODB_AUTH_MECHANISM:-}" ]]; then
         CONNECTION_ARGUMENTS+=(--authenticationMechanism="$MONGODB_AUTH_MECHANISM")
     fi
     if [[ -n "${MONGODB_TLS_CA_FILE:-}" ]]; then
-        CONNECTION_ARGUMENTS+=(--tls --tlsCAFile="$MONGODB_TLS_CA_FILE")
+        CONNECTION_ARGUMENTS+=(--ssl --sslCAFile="$MONGODB_TLS_CA_FILE")
     fi
     if [[ -n "${MONGODB_TLS_CERTIFICATE_KEY_FILE:-}" ]]; then
-        CONNECTION_ARGUMENTS+=(--tls --tlsCertificateKeyFile="$MONGODB_TLS_CERTIFICATE_KEY_FILE")
-    fi
-    if [[ -n "${MONGODB_TLS_CERTIFICATE_KEY_FILE_PASSWORD:-}" ]]; then
-        CONNECTION_ARGUMENTS+=(--tlsCertificateKeyFilePassword="$MONGODB_TLS_CERTIFICATE_KEY_FILE_PASSWORD")
+        CONNECTION_ARGUMENTS+=(--ssl --sslPEMKeyFile="$MONGODB_TLS_CERTIFICATE_KEY_FILE")
     fi
     if [[ "${MONGODB_TLS_INSECURE:-false}" == true ]]; then
-        CONNECTION_ARGUMENTS+=(--tls --tlsInsecure)
-    elif [[ "${MONGODB_TLS_INSECURE:-false}" != false ]]; then
-        die "MONGODB_TLS_INSECURE must be true or false"
+        CONNECTION_ARGUMENTS+=(--ssl --sslAllowInvalidCertificates --sslAllowInvalidHostnames)
     fi
 }
 
 discover() {
     local expression output
-    connection_arguments
-    expression='const l=db.adminCommand({listDatabases:1,nameOnly:true,authorizedDatabases:true}); if (!l.ok) throw new Error(l.errmsg); const h=db.adminCommand({hello:1}); print(JSON.stringify({databases:l.databases.map(x=>x.name).sort(),topology:h.msg==="isdbgrid"?"sharded":(h.setName?"replica-set":"standalone"),set_name:h.setName||null,writable_primary:h.isWritablePrimary===true}));'
-    output="$(mongosh "${CONNECTION_ARGUMENTS[@]}" --quiet --norc --eval "$expression")" || \
-        die "could not query MongoDB deployment"
+    # Static code in argv; secret values are read inside mongosh, never expanded
+    # into --eval. URI encoding preserves special characters in credentials.
+    expression="$(cat <<'JS'
+try {
+    const env = process.env;
+    let uri = env.MONGODB_URI;
+    const query = uri.indexOf("?");
+    let address = query < 0 ? uri : uri.slice(0, query);
+    const options = new URLSearchParams(query < 0 ? "" : uri.slice(query + 1));
+    function option(name, value) {
+        if (!value) return;
+        for (const key of [...options.keys()]) {
+            if (key.toLowerCase() === name.toLowerCase()) options.delete(key);
+        }
+        options.set(name, value);
+    }
+    if (env.MONGODB_USERNAME) {
+        const credentials = encodeURIComponent(env.MONGODB_USERNAME) +
+            (env.MONGODB_PASSWORD ? ":" + encodeURIComponent(env.MONGODB_PASSWORD) : "");
+        address = address.replace(/^(mongodb(?:\+srv)?:\/\/)(?:[^/@]*@)?/,
+            (_, scheme) => scheme + credentials + "@");
+    }
+    option("authSource", env.MONGODB_AUTH_DATABASE);
+    option("authMechanism", env.MONGODB_AUTH_MECHANISM);
+    option("tlsCAFile", env.MONGODB_TLS_CA_FILE);
+    option("tlsCertificateKeyFile", env.MONGODB_TLS_CERTIFICATE_KEY_FILE);
+    option("tlsCertificateKeyFilePassword", env.MONGODB_TLS_CERTIFICATE_KEY_FILE_PASSWORD);
+    if (env.MONGODB_TLS_CA_FILE || env.MONGODB_TLS_CERTIFICATE_KEY_FILE ||
+        env.MONGODB_TLS_INSECURE === "true") option("tls", "true");
+    if (env.MONGODB_TLS_INSECURE === "true") {
+        option("tlsAllowInvalidCertificates", "true");
+        option("tlsAllowInvalidHostnames", "true");
+    }
+    uri = address.replace(/\/?$/, "/") + "?" + options.toString();
+    const database = new Mongo(uri).getDB("admin");
+    const listing = database.adminCommand({listDatabases:1,nameOnly:true,authorizedDatabases:true});
+    if (!listing.ok) throw new Error("listDatabases failed");
+    const hello = database.adminCommand({hello:1});
+    if (!hello.ok) throw new Error("hello failed");
+    print(JSON.stringify({databases:listing.databases.map(x=>x.name).sort(),
+        topology:hello.msg==="isdbgrid"?"sharded":(hello.setName?"replica-set":"standalone"),
+        set_name:hello.setName||null,writable_primary:hello.isWritablePrimary===true}));
+} catch (_) {
+    // Connection/parser errors can include sensitive URI options. Do not echo them.
+    print("MongoDB discovery failed; check connection, credentials, TLS and privileges");
+    quit(1);
+}
+JS
+)"
+    output="$(mongosh --nodb --quiet --norc --eval "$expression")" || \
+        die "could not query MongoDB deployment; check connection, credentials, TLS and privileges"
     jq -e '.databases | type == "array" and all(.[]; type == "string")' \
         >/dev/null <<<"$output" || die "MongoDB discovery returned invalid JSON"
     DISCOVERY_JSON="$output"
@@ -105,11 +146,24 @@ validate_includes() {
     done <<<"$MONGODB_DATABASE_INCLUDE"
 }
 
-dump_database() {
-    local database="$1" destination="$2" output="$3"
+dump_database() (
+    local database="$1" destination="$2" output="$3" config
     local -a arguments
-    connection_arguments
-    arguments=("${CONNECTION_ARGUMENTS[@]}" --db="$database"
+    umask 077
+    config="$(mktemp "${TMPDIR:-/tmp}/backmaster-mongodb.XXXXXXXX")" || exit 1
+    trap 'rm -f -- "$config"' EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    # JSON is valid YAML. Read env inside jq instead of exposing secrets via --arg.
+    jq -n '{uri: env.MONGODB_URI} +
+        (if (env.MONGODB_PASSWORD // "") != "" then
+            {password: env.MONGODB_PASSWORD} else {} end) +
+        (if (env.MONGODB_TLS_CERTIFICATE_KEY_FILE_PASSWORD // "") != "" then
+            {sslPEMKeyPassword: env.MONGODB_TLS_CERTIFICATE_KEY_FILE_PASSWORD} else {} end)' \
+        >"$config" || exit 1
+    dump_connection_arguments
+    arguments=(--config="$config" "${CONNECTION_ARGUMENTS[@]}" --db="$database"
         --numParallelCollections="$MONGODB_NUM_PARALLEL_COLLECTIONS")
     [[ "$MONGODB_GZIP" == false ]] || arguments+=(--gzip)
     [[ "$MONGODB_DUMP_DB_USERS_AND_ROLES" == false ]] || \
@@ -122,7 +176,7 @@ dump_database() {
         directory) arguments+=(--out="$destination/$output") ;;
     esac
     mongodump "${arguments[@]}"
-}
+)
 
 prepare() {
     local destination="$1" available database digest extension output index temporary count=0
