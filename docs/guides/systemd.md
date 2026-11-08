@@ -252,6 +252,89 @@ explicit writable paths. Configuration under `/etc/backmaster` is readable but
 not writable. The default state directory is writable. AzCopy logs and job
 plans therefore default below the per-instance Backmaster state directory.
 
+Both templates also ship a `10-hardening.conf` drop-in. The restrictions apply
+to the backup or health service and its children, including the driver,
+exporter, and their external commands:
+
+| Setting | Effect |
+| --- | --- |
+| `CapabilityBoundingSet=` | Removes Linux capabilities from the service's bounding set. Custom components that need capabilities require a deliberate local override. |
+| `LockPersonality=yes` | Prevents changes to the process execution domain. |
+| `ProtectKernelTunables=yes` | Makes kernel tunable interfaces read-only to the service. |
+| `ProtectKernelModules=yes` | Restricts explicit kernel module loading and unloading; it does not prevent automatic module loading by the kernel. |
+| `ProtectControlGroups=yes` | Makes the control group hierarchy read-only to the service. |
+| `RestrictRealtime=yes` | Blocks requests for realtime scheduling policies. |
+| `RestrictSUIDSGID=yes` | Blocks setting set-user-ID and set-group-ID bits on files. |
+
+The templates already set `NoNewPrivileges=true`, which prevents gaining
+privileges through executable set-ID bits or file capabilities, and
+`PrivateTmp=true`, which gives the service a private temporary directory. The
+backup template also already sets `RestrictSUIDSGID=true`. These controls do
+not prevent the service from starting child processes: Backmaster needs them
+for its drivers, exporters, database clients, and compression tools. Network
+access remains available for Consul, database connections, and remote storage.
+
+These settings constrain a compromised process but do not prevent it from
+using data and network destinations accessible to the service account. In
+particular, PostgreSQL's `archive_command` and `restore_command` invoke
+Backmaster directly under PostgreSQL, outside these service units. They inherit
+the PostgreSQL or Patroni service's restrictions instead. Similarly, a manual
+CLI invocation does not inherit these drop-ins.
+
+The hardening drop-ins do not change the templates' existing path settings.
+Systemd's namespace and kernel support can vary, especially in containers; a
+syntax check alone does not prove that a service starts or that its drivers and
+exporters work. After installing or upgrading, run and inspect both services,
+check publication and retention as appropriate, and perform an isolated
+restore drill before relying on unattended backups. If an invocation fails,
+inspect its journal and the effective unit configuration:
+
+```bash
+systemctl cat backmaster@production-postgres.service
+systemctl cat backmaster-health@production-postgres.service
+journalctl -u backmaster@production-postgres.service -n 200 --no-pager
+journalctl -u backmaster-health@production-postgres.service -n 200 --no-pager
+```
+
+If a custom component needs a restriction relaxed, prefer an instance drop-in
+that changes the specific setting. For example, to allow a component to request
+realtime scheduling for one backup instance:
+
+```bash
+sudo systemctl edit backmaster@production-postgres.service
+```
+
+```ini
+[Service]
+RestrictRealtime=no
+```
+
+Use the matching `backmaster-health@...` service as well if the health check
+needs the same exception. Reload the manager, inspect the merged unit, and
+retest the affected workflow. The packaged files are under
+`/usr/lib/systemd/system/backmaster@.service.d/` and
+`/usr/lib/systemd/system/backmaster-health@.service.d/`; do not edit them
+directly. Instance drop-ins and template drop-ins with different names are
+applied in filename order, so a local override must sort after
+`10-hardening.conf`. For drop-ins with the same filename, the more specific
+instance drop-in takes precedence over the template drop-in.
+
+As a broader rollback, mask the vendor drop-in for all instances of a template
+by placing a same-named symlink to `/dev/null` under the matching template
+directory in `/etc/systemd/system`, then reload systemd. For example:
+
+```bash
+sudo install -d /etc/systemd/system/backmaster@.service.d
+sudo ln -s /dev/null \
+  /etc/systemd/system/backmaster@.service.d/10-hardening.conf
+sudo systemctl daemon-reload
+```
+
+Repeat with `backmaster-health@.service.d` if the health service also needs the
+rollback. Remove the symlink and reload systemd to restore the packaged
+drop-in. The underlying template restrictions, including path protections,
+still apply while the additional drop-in is masked.
+
 If `STAGING_ROOT` or an exporter state path is moved elsewhere, grant only the
 required path in drop-ins for both services that use it:
 

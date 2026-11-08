@@ -69,6 +69,8 @@ install -d -m 0755 \
     "$core_root/usr/lib/backmaster/drivers" \
     "$core_root/usr/lib/backmaster/exporters" \
     "$core_root/usr/lib/systemd/system" \
+    "$core_root/usr/lib/systemd/system/backmaster@.service.d" \
+    "$core_root/usr/lib/systemd/system/backmaster-health@.service.d" \
     "$core_root/usr/lib/sysusers.d" \
     "$core_root/usr/share/doc/$CORE_PACKAGE" \
     "$core_root/usr/share/doc/$CORE_PACKAGE/drivers" \
@@ -78,7 +80,12 @@ install -d -m 0755 \
     "$core_root/etc/backmaster/drivers.d" \
     "$core_root/etc/backmaster/exporters.d"
 install -m 0755 "$ROOT/bin/backmaster" "$core_root/usr/bin/backmaster"
-install -m 0644 "$ROOT/systemd/"* "$core_root/usr/lib/systemd/system/"
+install -m 0644 "$ROOT/systemd/"*.service "$ROOT/systemd/"*.timer \
+    "$core_root/usr/lib/systemd/system/"
+for unit in backmaster@.service backmaster-health@.service; do
+    install -m 0644 "$ROOT/systemd/hardening.conf" \
+        "$core_root/usr/lib/systemd/system/$unit.d/10-hardening.conf"
+done
 install -m 0644 "$ROOT/README.md" "$core_root/usr/share/doc/$CORE_PACKAGE/README.md"
 install -m 0644 "$ROOT/docs/drivers/index.md" \
     "$core_root/usr/share/doc/$CORE_PACKAGE/drivers/index.md"
