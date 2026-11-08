@@ -114,6 +114,46 @@ The [PostgreSQL driver reference](../drivers/postgresql.md#postgresql-client-env
 lists every supported libpq pass-through variable and explains which connection
 fields Backmaster sets explicitly.
 
+## MongoDB driver credentials
+
+Keep `MONGODB_URI` free of credentials and put authentication material in the
+driver secret file:
+
+```bash
+MONGODB_USERNAME=backmaster
+MONGODB_PASSWORD='REPLACE_ME'
+# MONGODB_AUTH_MECHANISM=SCRAM-SHA-256
+```
+
+X.509 deployments may instead reference a protected client PEM with
+`MONGODB_TLS_CERTIFICATE_KEY_FILE` and, when needed,
+`MONGODB_TLS_CERTIFICATE_KEY_FILE_PASSWORD`. AWS IAM variables supported by the
+MongoDB tools may also be supplied through the secret file. Prefer workload
+identity and short-lived credentials over static passwords.
+
+Use a separate directory so existing PostgreSQL-only permissions do not block
+the packaged `backmaster` identity:
+
+```bash
+sudo install -d -m 0750 -o root -g backmaster /etc/backmaster/mongodb-secrets
+sudo install -m 0640 -o root -g backmaster mongodb-driver.env \
+  /etc/backmaster/mongodb-secrets/production-mongodb-driver.env
+sudo install -m 0640 -o root -g backmaster mongodb-exporter.env \
+  /etc/backmaster/mongodb-secrets/production-mongodb-exporter.env
+sudo -u backmaster test -r /etc/backmaster/mongodb-secrets/production-mongodb-driver.env
+sudo -u backmaster test -r /etc/backmaster/mongodb-secrets/production-mongodb-exporter.env
+```
+
+Discovery reads credentials inside mongosh from its environment. Dumps use a
+temporary mode-0600 `mongodump --config` file for the URI, login password, and
+PEM password; passwords are never expanded into process arguments. This file
+is outside staging and removed when the dump exits, including failures and
+handled signals. SIGKILL or host failure can leave a protected temporary file;
+use the packaged `PrivateTmp=true` sandbox. Root and same-identity processes
+can still inspect credentials. Never enable shell tracing. See the
+[MongoDB driver reference](../drivers/mongodb.md#configuration-reference) for
+the complete authentication and TLS surface.
+
 ## Exporter examples
 
 An rclone Azure account-key file may contain:
@@ -158,6 +198,9 @@ Validate a new credential without creating a backup:
 sudo -u postgres backmaster connectivity production-postgres
 sudo -u postgres backmaster health production-postgres
 ```
+
+For a default-user MongoDB instance, run the equivalent commands as
+`backmaster`.
 
 Each Backmaster invocation reads the files again, so a oneshot service does not
 need a daemon restart after rotation. Replace a secret atomically, preserving

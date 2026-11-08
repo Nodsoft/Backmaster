@@ -53,7 +53,8 @@ an isolated restore test has passed.
 
 ## Configure the service identity
 
-The packaged service templates run as the unprivileged `backmaster` user. A
+The packaged service templates run as the unprivileged `backmaster` user. This
+is normally the correct identity for MongoDB URI connections. A
 driver that needs a different operating-system identity must override both the
 backup and health services. PostgreSQL deployments using local peer
 authentication normally run as `postgres`:
@@ -87,6 +88,17 @@ Replace `patroni.service` with the local PostgreSQL unit, or omit that ordering
 line when no explicit dependency is required. `After=` controls order only; it
 does not start the named service. Add `Wants=` or `Requires=` only when that
 lifecycle coupling is intentional.
+
+For a local MongoDB deployment, keep the default service identity and add only
+ordering when needed. Apply it to both backup and health services:
+
+```ini
+[Unit]
+After=mongod.service
+```
+
+Replace `mongod.service` with the installed MongoDB unit name. Connection
+credentials still belong in `DRIVER_SECRET_FILE`, not in the systemd unit.
 
 The template's `StateDirectory=backmaster/%i` makes systemd create
 `/var/lib/backmaster/INSTANCE` for the effective `User=` and `Group=` before
