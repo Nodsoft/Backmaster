@@ -39,6 +39,9 @@ done
 [[ "$(field backmaster-exporter-rclone Replaces)" == "backmaster (<< $version)" ]]
 
 contents backmaster-core | grep '/usr/bin/backmaster$' >/dev/null
+for unit in backmaster@.service backmaster-health@.service; do
+    contents backmaster-core | grep -F "/usr/lib/systemd/system/$unit.d/10-hardening.conf" >/dev/null
+done
 contents backmaster-core | grep '/usr/share/doc/backmaster-core/guides/installation.md$' >/dev/null
 contents backmaster-core | grep '/usr/share/doc/backmaster-core/guides/configuration.md$' >/dev/null
 contents backmaster-core | grep '/usr/share/doc/backmaster-core/guides/secrets.md$' >/dev/null
@@ -93,6 +96,10 @@ extract_root="$temporary/extracted"
 mkdir -p "$extract_root"
 for package in "${packages[@]}"; do
     dpkg-deb --extract "$(package_path "$package")" "$extract_root"
+done
+for unit in backmaster@.service backmaster-health@.service; do
+    cmp "$ROOT/systemd/hardening.conf" \
+        "$extract_root/usr/lib/systemd/system/$unit.d/10-hardening.conf"
 done
 [[ "$("$extract_root/usr/bin/backmaster" --version)" == "backmaster $version" ]]
 
